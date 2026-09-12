@@ -1,4 +1,8 @@
-/* ground-sharedos/.gitignore */
+# secrets — never commit
+.env
+.env.*
+!.env.example
+
 node_modules/
 audit/
 *.log

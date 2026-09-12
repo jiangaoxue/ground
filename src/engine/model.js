@@ -1,6 +1,11 @@
 // ============================================================
 // model.js — OpenAI-compatible chat adapter.
 //
+// Loads ../env.mjs first so MODEL_API_KEY / MODEL_BASE_URL / MODEL_NAME can
+// come from a .env file next to package.json. The import must stay the first
+// statement: KEY and BASE below are read at module load, so a later load would
+// arrive too late. A real environment variable still takes precedence.
+//
 // The model only ever sees text we already fetched. It is used for
 // reading comprehension ("which span of this text says the price?"),
 // never as the authority. Its output is checked by code afterwards,
@@ -11,6 +16,8 @@
 //   MODEL_API_KEY   required at runtime
 //   MODEL_NAME      default deepseek-chat
 // ============================================================
+
+import "../env.mjs";
 
 const BASE = (process.env.MODEL_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
 const KEY = process.env.MODEL_API_KEY || '';

@@ -68,7 +68,12 @@ export function alnum(s) {
 }
 
 // --- the primitive: really read a page ---
-export async function fetchPage(url, { timeoutMs = 9000, maxChars = 14000 } = {}) {
+// The GET deadline is deliberately generous: a hosted seller on a cold
+// serverless start (Vercel, Fly) routinely needs more than nine seconds, and
+// reporting a live page as unreachable would be a false negative — the one
+// failure this product cannot afford. The HEAD probe is the opposite: it is
+// only a hint, so it fails fast instead of holding the request open.
+export async function fetchPage(url, { timeoutMs = 20000, headTimeoutMs = 3500, maxChars = 14000 } = {}) {
   const started = Date.now();
   const fetched_at = new Date().toISOString();
   let status = null;
@@ -79,7 +84,7 @@ export async function fetchPage(url, { timeoutMs = 9000, maxChars = 14000 } = {}
   // HEAD first: cheap reachability probe. Some hosts block it, so a
   // failure here is not fatal — the GET below decides.
   try {
-    const h = deadline(timeoutMs);
+    const h = deadline(headTimeoutMs);
     try {
       const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: h.signal, headers: { 'user-agent': UA } });
       status = res.status;

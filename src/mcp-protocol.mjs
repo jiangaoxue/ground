@@ -8,8 +8,13 @@
 // the same logic serves the public HTTP endpoint and the stdio server
 // that a coding agent can spawn locally.
 //
-// Nothing here talks to SharedOS. The kernel is the internal
-// enforcement layer; this is the public interface to it.
+// The kernel is not optional here. src/runtime.mjs builds one kernel per
+// process and arms this door with setKernelRunner(); from then on every
+// ground.* tools/call — HTTP or stdio — executes as one SharedOS kernel
+// turn: authority resolved, grant checked, tool invoked, every decision
+// appended to the audit chain. The output of that path already carries
+// its receipt and its audit link, so this module does not wrap it again.
+// Unarmed (unit tests, direct imports), calls fall through to the engine.
 // ============================================================
 
 import { createRequire } from 'node:module';
@@ -190,6 +195,19 @@ export async function callTool(name, args = {}) {
   }
 }
 
+// ---------------------------------------------------------------- kernel wiring
+//
+// Set by src/runtime.mjs at import time. When armed, every ground.*
+// tools/call runs as one SharedOS kernel turn and the returned payload
+// already carries `receipt` and `audit` — this module must not wrap it
+// again, or the receipt id would be computed over the receipt itself.
+
+let kernelRunner = null;
+
+export function setKernelRunner(fn) {
+  kernelRunner = typeof fn === 'function' ? fn : null;
+}
+
 function textContent(payload) {
   return [{ type: 'text', text: JSON.stringify(payload, null, 2) }];
 }
@@ -199,8 +217,17 @@ export async function toolsCall(params) {
   const name = params?.name;
   const args = params?.arguments || {};
   try {
-    const out = withReceipt(await callTool(name, args));
-    const clean = JSON.parse(JSON.stringify(out)); // MCP rejects undefined anywhere in the payload
+    if (!byName.has(name)) throw new Error(`unknown tool: ${name}`);
+    const raw = kernelRunner
+      ? await kernelRunner(name, args) // one kernel turn; receipt + audit attached inside
+      : withReceipt(await callTool(name, args)); // unarmed fallback (unit tests, direct imports)
+    const clean = JSON.parse(JSON.stringify(raw)); // MCP rejects undefined anywhere in the payload
+    // A refusal (invalid arguments, kernel turn failed) is still a full,
+    // honest payload — the real reason, the trace, the audit link — but
+    // MCP semantics say the call did not succeed, so say so with isError.
+    if (raw && raw.ok === false) {
+      return { content: textContent(clean), structuredContent: clean, isError: true };
+    }
     return { content: textContent(clean), structuredContent: clean, isError: false };
   } catch (error) {
     const message = String(error?.message || error);

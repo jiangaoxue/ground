@@ -16,7 +16,18 @@ import {
   certify as engineCertify,
 } from "./engine/ground.js";
 import { callSelfcheck } from "./mcp-protocol.mjs";
-import { withReceipt } from "./receipt.mjs";
+import { withReceipt, publicBase } from "./receipt.mjs";
+
+/** The kernel's audit records for this turn, at a public address. */
+function auditBlock(traceId) {
+  if (!traceId) return null;
+  const base = publicBase();
+  return {
+    trace_id: traceId,
+    url: base ? `${base}/audit?trace=${traceId}` : null,
+    what: "the SharedOS kernel's own records for the turn that produced this answer — authority resolved, grant checked, tool invoked",
+  };
+}
 
 const catalog = JSON.parse(
   await import("node:fs/promises").then((fs) => fs.readFile(new URL("../catalog.json", import.meta.url), "utf8"))
@@ -201,10 +212,14 @@ export function createGroundTools() {
     parseArguments: spec.parse,
     async invoke(context, call, signal) {
       signal.throwIfAborted();
-      // Every answer leaves with an address: the receipt is packed into a
-      // link the buyer can cite, attach, or open in a browser. A receipt that
-      // only ever existed inside one response is a fee, not a deliverable.
-      const result = JSON.parse(JSON.stringify(withReceipt(await spec.run(call.arguments)))); // 内核要求纯 JSON（undefined 会违约）
+      // Every answer leaves with two addresses. receipt.url carries the
+      // evidence about the source; audit.url carries the kernel's own
+      // records about the turn that produced it. A receipt that only ever
+      // existed inside one response is a fee, not a deliverable — and a
+      // kernel that only we can inspect is a claim, not a fact.
+      const payload = await spec.run(call.arguments);
+      payload.audit = auditBlock(context?.traceId);
+      const result = JSON.parse(JSON.stringify(withReceipt(payload))); // 内核要求纯 JSON（undefined 会违约）
       return {
         callId: call.id,
         tool: spec.name,
@@ -214,6 +229,12 @@ export function createGroundTools() {
       };
     },
   }));
+}
+
+/** The tool's own argument parser. The kernel reports invalid arguments
+ *  with a fixed generic message; the buyer deserves the real one. */
+export function findToolSpec(name) {
+  return SPECS.find((s) => s.name === name) || null;
 }
 
 export { CREDITS };

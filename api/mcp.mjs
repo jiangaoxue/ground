@@ -14,6 +14,7 @@
 // ============================================================
 
 import { handleRpc, SERVER_INFO, TOOLS, agentCard, catalog } from '../src/mcp-protocol.mjs';
+import '../src/runtime.mjs'; // one kernel per process; arms the MCP door so every tools/call is a kernel turn
 import { publicBase } from './agent-card.mjs';
 
 const MAX_BODY = 512 * 1024;

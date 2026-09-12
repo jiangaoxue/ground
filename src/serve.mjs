@@ -28,18 +28,15 @@
 // 我们自己的模型密钥：没有上限，别人可以拿它当免费额度用。超限返回 429。
 
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { SharedOSExecutor, StandardRuntime } from "@aicoo/sharedos";
-import { buildKernel } from "./kernel.mjs";
-import { createGroundTools } from "./ground-tools.mjs";
-import { agents, owner, PURPOSE } from "./policy.mjs";
+import { runTool } from "./runtime.mjs"; // builds the kernel, registers the tools, arms the MCP door
 import mcpHandler from "../api/mcp.mjs";
 import agentCardHandler from "../api/agent-card.mjs";
 import catalogHandler from "../api/catalog.mjs";
 import healthHandler from "../api/health.mjs";
 import receiptHandler from "../api/receipt.mjs";
+import auditHandler from "../api/audit.mjs";
 
 const PORT = Number(process.env.PORT || 8081);
 // 本机跑（没注入 PORT）时宁可只绑回环；被托管时才对外。
@@ -80,78 +77,7 @@ function charge(ip) {
   return { ok: true, used_today: spend.total, remaining_today: BUDGET.total - spend.total };
 }
 
-const { kernel } = buildKernel({ auditPath: "audit/audit.jsonl" });
-for (const t of createGroundTools()) kernel.registerTool(t);
-
-/** 跑一个内核 turn 去执行指定工具，返回该工具的原始输出。 */
-async function runTool(tool, args, requestedBy = "arena-buyer") {
-  const traceId = randomUUID();
-  const context = {
-    namespaceId: "ground",
-    actor: agents.probe,
-    authority: owner,
-    owner,
-    purpose: PURPOSE,
-    traceId,
-    enabledToolNamespaces: ["ground", "files"], // 实测：只写 ground 时目录为空
-    now: new Date().toISOString(),
-  };
-
-  let captured = null;
-  let step = 0;
-  const driver = {
-    async open() {
-      return {
-        async next(input) {
-          if (input?.type === "tool_result") {
-            const out = input.result?.output;
-            if (out && typeof out === "object") captured = out;
-          }
-          step += 1;
-          if (step === 1) {
-            return {
-              type: "tool_call",
-              call: {
-                id: randomUUID(),
-                tool,
-                arguments: args,
-                traceId,
-                requestedAt: new Date().toISOString(),
-              },
-            };
-          }
-          return { type: "complete", output: { done: true } };
-        },
-      };
-    },
-  };
-
-  const tools = await kernel.listTools(context);
-  const turn = await new SharedOSExecutor(kernel, new StandardRuntime(driver), {
-    defaultMaxSteps: 6,
-    defaultMaxToolCalls: 4,
-    defaultTimeoutMs: 150_000,
-  }).execute({
-    version: "1",
-    executionId: randomUUID(),
-    agent: agents.probe,
-    context,
-    message: {
-      version: "1",
-      id: randomUUID(),
-      sender: { kind: "agent", agentId: requestedBy },
-      receiver: agents.probe,
-      purpose: PURPOSE,
-      payload: { text: `${tool} ${JSON.stringify(args).slice(0, 200)}` },
-      traceId,
-      createdAt: new Date().toISOString(),
-    },
-    tools: [...tools],
-  });
-
-  if (!captured) return { ok: false, error: "no_result", turn_status: turn.status, trace_id: traceId };
-  return { ...captured, trace_id: traceId };
-}
+// 内核、工具注册与 MCP 门的武装都在 runtime.mjs（进程级单例）。
 
 async function readJson(req) {
   let raw = "";
@@ -231,6 +157,7 @@ const server = createServer(async (req, res) => {
     if (pathname === "/catalog.json") return catalogHandler(req, res);
     if (pathname === "/mcp") return mcpHandler(req, res);
     if (pathname === "/receipt") return receiptHandler(req, res);
+    if (pathname === "/audit") return auditHandler(req, res);
     if (await serveStatic(res, pathname)) return;
     return send(404, { ok: false, error: "not found", hint: "see /agent-card.json" });
   }
@@ -298,6 +225,8 @@ server.listen(PORT, HOST, () => {
   console.log(`  GET  /health               liveness + price list (FREE, no model call)`);
   console.log(`  GET  /agent-card.json      discovery document for agents`);
   console.log(`  GET  /catalog.json         machine-readable price list`);
+  console.log(`  GET  /receipt?d=…          a paid receipt, packed in the link (FREE)`);
+  console.log(`  GET  /audit?trace=…        the kernel's own records for a turn (FREE)`);
   console.log(`  POST /mcp                  MCP JSON-RPC: initialize / tools/list / tools/call`);
   console.log(`  POST /check | /receipt     {"url","statement"}        3 credits`);
   console.log(`  POST /extract              {"url","fields":[…]}       5 credits`);

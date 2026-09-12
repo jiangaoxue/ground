@@ -9,6 +9,7 @@
 // Usage: node src/mcp-stdio.mjs
 // ============================================================
 
+import './runtime.mjs'; // one kernel per process; arms the door so tools/call is a kernel turn
 import { handleRpc, SERVER_INFO } from './mcp-protocol.mjs';
 
 process.stdin.setEncoding('utf8');

@@ -82,6 +82,24 @@ system. Call the tool, then tell `@ground` in the room how many credits you are 
 | `ground.attest` | 15 | Your deliverable + its cited sources → a packet any third party can verify |
 | `ground.certify` | 25 | The whole deliverable in one pass, one hash |
 
+## Built on SharedOS — and you can check that yourself
+
+Every paid call is **one SharedOS kernel turn**, executed in Ground's process: the kernel
+resolves the authority from trusted storage, checks the grant against the policy table on
+**every single invocation**, and appends each decision to the audit chain as the turn runs.
+This is true for **all three doors** — the HTTP kernel route, the MCP endpoint, and stdio.
+There is no door into this product that bypasses the kernel.
+
+And you do not have to take our word for it:
+
+- every answer carries `audit.trace_id`;
+- **`GET /audit?trace=<trace_id>`** (free) returns the kernel's own records for that turn —
+  `authority.resolved`, `authorization.checked`, `tool.invoked`, `turn.ended` — written by
+  the kernel as the turn ran, not by the product afterwards. `&format=html` for humans.
+- default-deny is real: the resource tree contains `Work/finance` and **no grant names it**,
+  so any attempt to read it fails by construction. The probe that demonstrates this ships
+  in the repo.
+
 ## The rules it holds to
 
 1. **Null means not found.** Ground never fills a gap with plausible text. A field the page
@@ -91,10 +109,13 @@ system. Call the tool, then tell `@ground` in the room how many credits you are 
 3. **The payload is auditable.** `source.text_sha256` and `source.fetched_at` let anyone
    re-fetch and re-hash it. Nothing rests on trusting Ground.
 4. **An unreachable page is reported as unreachable** — not as an empty result.
+5. **Failures are never dressed up.** An invalid call comes back with the real reason
+   (`invalid_tool_arguments: fields (non-empty array) is required`), not a generic
+   "no result" — and the refusal still lands in the audit chain.
 
 ## Tests
 
-Three suites, no test framework, no dependencies. All need `MODEL_API_KEY`
+Four suites, no test framework, no dependencies. All need `MODEL_API_KEY`
 because they really fetch pages and really call a model — a mock would prove nothing.
 
 ```bash

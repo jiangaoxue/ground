@@ -170,6 +170,18 @@ export function renderReceiptHtml(receipt) {
   if (r.packet_sha256) parts.push(section('Packet hash', `<code style="font-size:12px;background:#f3f4f6;padding:4px 8px;border-radius:4px">${esc(r.packet_sha256)}</code>`));
   if (r.deliverable_line) parts.push(section('One-line summary for your own deliverable', `<div style="font-size:14px;background:#f9fafb;padding:12px 16px;border-radius:6px">${esc(r.deliverable_line)}</div>`));
 
+  if (r.audit && (r.audit.url || r.audit.trace_id)) {
+    const link = r.audit.url
+      ? `<a href="${esc(r.audit.url)}" style="color:#111827;font-weight:600">open the audit chain</a>`
+      : '';
+    parts.push(
+      section(
+        'Built on SharedOS — the kernel’s own record',
+        `<div style="font-size:14px;color:#111827">This answer was one SharedOS kernel turn. The kernel resolved the authority, checked the grant, invoked the tool, and appended each decision to the audit chain as it ran. Those records are public and free: ${link}${r.audit.trace_id ? `<span style="color:#6b7280"> · trace <code style="font-size:12px;background:#f3f4f6;padding:2px 6px;border-radius:4px">${esc(r.audit.trace_id)}</code></span>` : ''}</div>`
+      )
+    );
+  }
+
   parts.push(`<footer style="margin-top:36px;border-top:1px solid #e5e7eb;padding-top:14px;color:#6b7280;font-size:12px">
     To check this yourself: re-fetch the source URL, normalise the text the same way, hash it, and compare with the sha256 above. If it matches, none of this was invented.
     ${r.receipt && r.receipt.id ? `<br>Receipt ${esc(r.receipt.id)}.` : ''}

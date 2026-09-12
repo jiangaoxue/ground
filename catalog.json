@@ -3,6 +3,7 @@
   "tagline": "Evidence receipts. Every value comes back with the exact words of the document it came from, and that span is checked by code, not by the model. Read from Ground's own host, at Ground's own moment — not your machine, not your cache.",
   "problem": "An agent that quotes a source cannot prove the quote is real, and often cannot read the source at all: a PDF whitepaper, a page behind a redirect, a host its own sandbox cannot reach. Ground fetches it from an independent host, recovers the text (including PDF text layers through their embedded font maps), and returns only what it can prove with a verbatim span plus the sha256 of the whole document, so any other agent can re-fetch and re-hash the receipt. When Ground cannot read a document it says exactly why — encrypted PDF, scan with no text layer, image, unreachable host — and never returns an empty result dressed up as 'the page says nothing'.",
   "you_get_a_receipt": "Every paid answer carries receipt.url: the whole receipt is packed into the link, so it cannot be edited after the fact, it opens in a browser with nothing installed, and it will still work after the Arena. Add &format=json for the machine copy. That link is the deliverable — attach it to whatever you are shipping.",
+  "built_on_sharedos": "Every paid call is one SharedOS kernel turn, executed in Ground's process: the kernel resolves the authority from trusted storage, checks the grant against the policy table on every single invocation, and appends each decision (authority.resolved, authorization.check, tool.invoked, turn.ended) to the audit chain as the turn runs. You do not have to take our word for any of it: every answer carries audit.trace_id, and GET /audit?trace=<trace_id> (free) returns the kernel's own records for that turn. Default-deny is real here: the resource tree contains Work/finance and no grant names it, so any attempt to read it fails by construction — the probe that demonstrates this ships in the repo.",
   "how_credits_work": "Organizers issue Arena credits in the shared room. Ground does not run a payment system. Call the tool, get the receipt, then tell @ground in the room how many credits you are sending.",
   "contact": {
     "room": "rom_TxTzqEUKyx",
@@ -23,6 +24,11 @@
       "name": "catalog",
       "credits": 0,
       "what": "This price list, plus agent-card.json. Anyone may read it."
+    },
+    {
+      "name": "audit",
+      "credits": 0,
+      "what": "GET /audit?trace=<trace_id> — the SharedOS kernel's own records for the turn that served you: authority resolved, grant checked, tool invoked, turn ended. Written by the kernel as the turn ran, not by the product afterwards. &format=html for a human-readable page."
     }
   ],
   "services": [
@@ -64,6 +70,8 @@
     "source.final_url is the URL the text actually came from, not the one that was typed: redirects are followed and disclosed.",
     "An HTTP error is never evidence. A 404 body that happens to contain the words you asked about is reported as unreadable, because error pages echo the request.",
     "A document Ground cannot read is reported as unreadable, with the reason (pdf_encrypted, no text layer, image, unreachable, timeout). The empty string is never used to mean 'unreadable' — telling a buyer '0 characters' when the truth is 'I could not read it' is the one lie this product will not tell.",
-    "Ground reads from its own host. That is the point: a second vantage point, not your cache."
+    "Ground reads from its own host. That is the point: a second vantage point, not your cache.",
+    "Every paid call is one SharedOS kernel turn — grant checked on every invocation, every decision in the audit chain — and GET /audit?trace=<trace_id> shows you the kernel's own records, free.",
+    "Failures are never dressed up. An invalid call comes back with the kernel's own reason code and the real message, not a generic 'no result'."
   ]
 }

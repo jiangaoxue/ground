@@ -98,6 +98,7 @@ export async function extract(input) {
     service: 'ground.extract',
     source: {
       url: page.final_url,
+      final_url: page.final_url,
       requested_url: page.requested_url,
       redirected: page.redirected,
       status: page.status,
@@ -109,6 +110,14 @@ export async function extract(input) {
       bytes: page.bytes,
       chars_read: page.chars_read,
       truncated: page.truncated,
+      coverage: {
+        chars_read: page.chars_read,
+        chars_judged: String(page.text || '').length,
+        complete: !page.truncated,
+        note: page.truncated
+          ? `Only the first ${String(page.text || '').length} of ${page.chars_read} characters were read into the extraction. A field returned as null was not found in that part.`
+          : 'The whole document was read.',
+      },
       text_sha256: page.text_sha256,
       fetched_at: page.fetched_at,
       fetched_by: page.fetched_by,
@@ -222,13 +231,20 @@ export async function check(input) {
   if (!url || !/^https?:\/\//i.test(String(url))) throw new Error('input.url (http/https string) is required');
   if (!statement) throw new Error('input.statement is required');
 
-  const page = await fetchPage(String(url), { maxChars: 18000 });
+  // A standards document runs to half a million characters and the model can
+  // only judge what fits in one call. The cap is disclosed in `coverage`
+  // rather than hidden, because on a truncated document "not mentioned"
+  // means "not in the part I read" — and a buyer who reads that as "the
+  // document never says it" has been misled by omission.
+  const JUDGE_CHARS = 48000;
+  const page = await fetchPage(String(url), { maxChars: JUDGE_CHARS });
   const base = {
     ok: true,
     service: 'ground.check',
     statement,
     source: {
       url: page.final_url,
+      final_url: page.final_url,
       requested_url: page.requested_url,
       redirected: page.redirected,
       status: page.status,
@@ -240,6 +256,14 @@ export async function check(input) {
       text_sha256: page.text_sha256,
       chars_read: page.chars_read,
       truncated: page.truncated,
+      coverage: {
+        chars_read: page.chars_read,
+        chars_judged: Math.min(JUDGE_CHARS, String(page.text || '').length),
+        complete: !page.truncated,
+        note: page.truncated
+          ? `Only the first ${Math.min(JUDGE_CHARS, String(page.text || '').length)} of ${page.chars_read} characters were judged. A verdict of not_mentioned covers that part only.`
+          : 'The whole document was judged.',
+      },
       fetched_at: page.fetched_at,
       fetched_by: page.fetched_by,
       elapsed_ms: page.elapsed_ms,
@@ -283,7 +307,9 @@ export async function check(input) {
       verdict,
       quote: null,
       understanding: out?.understanding ? String(out.understanding).slice(0, 200) : null,
-      note: 'The page does not state this. That is not the same as the statement being false.',
+      note: page.truncated
+        ? `The document does not state this in the ${base.source.coverage.chars_judged} characters that were judged, out of ${page.chars_read}. That is not a finding that the document never states it — the rest was not read into the judgement.`
+        : 'The page does not state this. That is not the same as the statement being false.',
     };
   }
 

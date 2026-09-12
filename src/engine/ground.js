@@ -70,7 +70,7 @@ function userPrompt(page, fields) {
   const spec = fields
     .map((f) => `- ${f.name} (type: ${f.type}${f.hint ? `, hint: ${f.hint}` : ''})`)
     .join('\n');
-  return `PAGE URL: ${page.url}
+  return `PAGE URL: ${page.final_url}${page.redirected ? ` (redirected from ${page.requested_url})` : ''}
 PAGE TITLE: ${page.title || '(none)'}
 
 PAGE TEXT:
@@ -97,9 +97,13 @@ export async function extract(input) {
     ok: true,
     service: 'ground.extract',
     source: {
-      url: page.url,
+      url: page.final_url,
+      requested_url: page.requested_url,
+      redirected: page.redirected,
       status: page.status,
       reachable: page.reachable,
+      readable: page.readable,
+      unreadable_reason: page.unreadable_reason,
       title: page.title,
       content_type: page.content_type,
       bytes: page.bytes,
@@ -107,18 +111,20 @@ export async function extract(input) {
       truncated: page.truncated,
       text_sha256: page.text_sha256,
       fetched_at: page.fetched_at,
+      fetched_by: page.fetched_by,
       elapsed_ms: page.elapsed_ms,
       error: page.error,
     },
     fields: {},
   };
 
-  if (!page.reachable || !page.ok || !page.text) {
+  if (!page.readable) {
+    const why = page.unreadable_reason || (page.reachable ? 'no_readable_text' : 'source_unreachable');
     for (const f of fields) {
-      base.fields[f.name] = { value: null, grounded: false, reason: 'source_unavailable' };
+      base.fields[f.name] = { value: null, grounded: false, reason: why };
     }
     base.grounding = { verified: 0, not_found: 0, ungrounded: fields.length, total: fields.length, ratio: 0 };
-    base.note = 'The source could not be read. Nothing was extracted. This is a miss, not a result.';
+    base.note = `The source was not read (${why}). Nothing was extracted. This is a miss, not a result — no field is null because the page omits it.`;
     return base;
   }
 
@@ -222,19 +228,34 @@ export async function check(input) {
     service: 'ground.check',
     statement,
     source: {
-      url: page.url,
+      url: page.final_url,
+      requested_url: page.requested_url,
+      redirected: page.redirected,
       status: page.status,
       reachable: page.reachable,
+      readable: page.readable,
+      unreadable_reason: page.unreadable_reason,
       title: page.title,
+      content_type: page.content_type,
       text_sha256: page.text_sha256,
+      chars_read: page.chars_read,
+      truncated: page.truncated,
       fetched_at: page.fetched_at,
+      fetched_by: page.fetched_by,
       elapsed_ms: page.elapsed_ms,
       error: page.error,
     },
   };
 
-  if (!page.reachable || !page.ok || !page.text) {
-    return { ...base, verdict: 'source_unavailable', quote: null, note: 'The source could not be read. No judgement was made.' };
+  if (!page.readable) {
+    const why = page.unreadable_reason || (page.reachable ? 'no_readable_text' : 'source_unreachable');
+    return {
+      ...base,
+      verdict: 'source_unavailable',
+      unreadable_reason: why,
+      quote: null,
+      note: `The source was not read (${why}). No judgement was made — this is a miss, not a finding that the page omits the statement.`,
+    };
   }
   if (!modelReady()) {
     return { ...base, verdict: 'extractor_unavailable', quote: null, note: 'No extractor configured; nothing was judged.' };

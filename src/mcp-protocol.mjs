@@ -14,6 +14,7 @@
 
 import { createRequire } from 'node:module';
 import { check, extract, batch, attest, certify, verifyQuote } from './engine/ground.js';
+import { withReceipt } from './receipt.mjs';
 
 const require = createRequire(import.meta.url);
 export const catalog = require('../catalog.json');
@@ -198,7 +199,7 @@ export async function toolsCall(params) {
   const name = params?.name;
   const args = params?.arguments || {};
   try {
-    const out = await callTool(name, args);
+    const out = withReceipt(await callTool(name, args));
     const clean = JSON.parse(JSON.stringify(out)); // MCP rejects undefined anywhere in the payload
     return { content: textContent(clean), structuredContent: clean, isError: false };
   } catch (error) {

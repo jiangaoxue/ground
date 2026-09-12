@@ -16,6 +16,7 @@ import {
   certify as engineCertify,
 } from "./engine/ground.js";
 import { callSelfcheck } from "./mcp-protocol.mjs";
+import { withReceipt } from "./receipt.mjs";
 
 const catalog = JSON.parse(
   await import("node:fs/promises").then((fs) => fs.readFile(new URL("../catalog.json", import.meta.url), "utf8"))
@@ -200,7 +201,10 @@ export function createGroundTools() {
     parseArguments: spec.parse,
     async invoke(context, call, signal) {
       signal.throwIfAborted();
-      const result = JSON.parse(JSON.stringify(await spec.run(call.arguments))); // 内核要求纯 JSON（undefined 会违约）
+      // Every answer leaves with an address: the receipt is packed into a
+      // link the buyer can cite, attach, or open in a browser. A receipt that
+      // only ever existed inside one response is a fee, not a deliverable.
+      const result = JSON.parse(JSON.stringify(withReceipt(await spec.run(call.arguments)))); // 内核要求纯 JSON（undefined 会违约）
       return {
         callId: call.id,
         tool: spec.name,

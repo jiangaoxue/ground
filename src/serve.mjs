@@ -39,6 +39,7 @@ import mcpHandler from "../api/mcp.mjs";
 import agentCardHandler from "../api/agent-card.mjs";
 import catalogHandler from "../api/catalog.mjs";
 import healthHandler from "../api/health.mjs";
+import receiptHandler from "../api/receipt.mjs";
 
 const PORT = Number(process.env.PORT || 8081);
 // 本机跑（没注入 PORT）时宁可只绑回环；被托管时才对外。
@@ -229,6 +230,7 @@ const server = createServer(async (req, res) => {
     if (pathname === "/agent-card.json") return agentCardHandler(req, res);
     if (pathname === "/catalog.json") return catalogHandler(req, res);
     if (pathname === "/mcp") return mcpHandler(req, res);
+    if (pathname === "/receipt") return receiptHandler(req, res);
     if (await serveStatic(res, pathname)) return;
     return send(404, { ok: false, error: "not found", hint: "see /agent-card.json" });
   }

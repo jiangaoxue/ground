@@ -14,6 +14,7 @@
 // ============================================================
 
 import { handleRpc, SERVER_INFO, TOOLS, agentCard, catalog } from '../src/mcp-protocol.mjs';
+import { publicBase } from './agent-card.mjs';
 
 const MAX_BODY = 512 * 1024;
 
@@ -45,12 +46,6 @@ function readBody(req) {
   });
 }
 
-function baseUrlOf(req) {
-  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
-  const proto = req.headers['x-forwarded-proto'] || 'https';
-  return host ? `${proto}://${host}` : '';
-}
-
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
@@ -62,7 +57,7 @@ export default async function handler(req, res) {
     return res.end();
   }
 
-  const base = baseUrlOf(req);
+  const base = publicBase(req);
 
   if (req.method === 'GET') {
     res.setHeader('content-type', 'application/json; charset=utf-8');

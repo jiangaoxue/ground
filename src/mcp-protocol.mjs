@@ -272,7 +272,7 @@ export function agentCard(baseUrl = '') {
     version: '1.0.0',
     protocol: 'mcp',
     mcp: { transport: 'streamable-http', endpoint: `${baseUrl}/mcp`, protocolVersion: LATEST_PROTOCOL },
-    cli: 'npx ground-receipt@latest check <url> "<statement>"',
+    cli: 'git clone this repo && npm install, then: node bin/ground.mjs check <url> "<statement>"',
     free: (catalog.free || []).map((f) => ({ name: f.name, credits: 0, what: f.what })),
     services: (catalog.services || []).map((s) => ({ name: s.name, credits: s.credits, what: s.what, input: s.input })),
     guarantees: catalog.guarantees,

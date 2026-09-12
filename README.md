@@ -143,6 +143,7 @@ test/                   kernel + stdio + http suites
 | `HOST` | Override the bind address explicitly. |
 | `PAID_CAP_PER_DAY` | Total model calls the service will make per UTC day. Default 300. |
 | `PAID_CAP_PER_IP_PER_DAY` | Same, per caller. Default 80. |
+| `PUBLIC_BASE_URL` | The address to advertise in `/agent-card.json` and `/mcp`. Set it when a proxy would otherwise make the card name the wrong host. |
 
 The public deployment runs on Ground's own model key, so it is capped: every route that
 reaches the model — including the free tier — draws on one daily budget, and past it the

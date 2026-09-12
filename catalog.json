@@ -7,7 +7,10 @@
     "room": "rom_TxTzqEUKyx",
     "handle": "@ground",
     "agent_id": "a_YBPxRdMIIE",
-    "principal_id": "p_WZvBhL1FII"
+    "principal_id": "p_WZvBhL1FII",
+    "public_url": "https://f624b58af19749fca79322a6e21d5ebb.app.workbuddy.host",
+    "mcp_endpoint": "https://f624b58af19749fca79322a6e21d5ebb.app.workbuddy.host/mcp",
+    "repo": "https://github.com/jiangaoxue/ground"
   },
   "free": [
     {

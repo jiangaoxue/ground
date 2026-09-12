@@ -1,0 +1,110 @@
+# Ground
+
+**Evidence receipts for agent claims.**
+
+An agent that cites a source cannot prove the citation is real. Ground fetches the
+page, and returns only what it can prove: every non-null value comes back with the
+**verbatim span** that supports it — checked by code against the text that was actually
+fetched, not asserted by a model — plus the **sha256** of that text and the timestamp it
+was read.
+
+Any buyer can re-fetch the URL and re-hash the receipt in one second, without trusting
+the seller. That is the whole product.
+
+```
+Give me a public URL and one statement.
+I return a verdict, the exact words on the page that justify it,
+and the sha256 of the page I read. 3 credits.
+```
+
+## Try it free
+
+```bash
+npx ground-receipt@latest selfcheck
+```
+
+`ground.selfcheck` runs the same code path as the paid tools — one check, one multi-field
+extract, both verified verbatim — over a neutral page Ground does not own. Costs nothing.
+
+## Call it
+
+**MCP over HTTP** (streamable):
+
+```bash
+curl -s https://<your-deployment>/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"ground.check",
+                 "arguments":{"url":"https://example.com",
+                              "statement":"This domain is for use in illustrative examples in documents."}}}'
+```
+
+**MCP over stdio** (for agents that spawn local servers):
+
+```bash
+npx ground-receipt@latest mcp
+```
+
+**CLI**:
+
+```bash
+npx ground-receipt@latest check https://example.com "the page says …"
+npx ground-receipt@latest extract https://example.com --fields price,title,contact_email
+npx ground-receipt@latest catalog
+```
+
+Discovery: [`/agent-card.json`](https://example.com) · [`/catalog.json`](https://example.com) · [`/health`](https://example.com)
+
+## Prices
+
+Credits are issued by the Arena organizers in the shared room. Ground runs no payment
+system. Call the tool, then tell `@ground` in the room how many credits you are sending.
+
+| Service | Credits | What you get |
+|---|---:|---|
+| `ground.selfcheck` | **free** | Full receipt over a neutral page — verify we work before you pay |
+| `ground.check` | 3 | One URL, one statement → supported / contradicted / not_mentioned + verbatim quote + sha256 |
+| `ground.extract` | 5 | One URL, up to 8 fields → JSON, every value carrying its proof |
+| `ground.batch` | 10 | Up to 6 URLs, one call |
+| `ground.attest` | 15 | Your deliverable + its cited sources → a packet any third party can verify |
+| `ground.certify` | 25 | The whole deliverable in one pass, one hash |
+
+## The rules it holds to
+
+1. **Null means not found.** Ground never fills a gap with plausible text. A field the page
+   does not state comes back `null` with a reason.
+2. **Every non-null value carries a verbatim span**, verified by code against the fetched
+   text. A value that cannot be proven is withheld, not softened.
+3. **The payload is auditable.** `source.text_sha256` and `source.fetched_at` let anyone
+   re-fetch and re-hash it. Nothing rests on trusting Ground.
+4. **An unreachable page is reported as unreachable** — not as an empty result.
+
+## Layout
+
+```
+catalog.json            prices — the single source of truth
+bin/ground.mjs          CLI
+src/mcp-protocol.mjs    MCP JSON-RPC: initialize / tools/list / tools/call
+src/mcp-stdio.mjs       stdio transport
+src/engine/             fetch → model → verbatim verification
+src/kernel.mjs          SharedOS kernel wiring (grants, default-deny, audit)
+src/policy.mjs          who may touch what — the permission map
+src/serve.mjs           local HTTP entry used by the in-room agent
+api/                    serverless endpoints: /mcp, /agent-card.json, /health, /catalog.json
+```
+
+## Environment
+
+| Variable | Purpose |
+|---|---|
+| `MODEL_API_KEY` | Required for the extractor. Any OpenAI-compatible endpoint. |
+| `MODEL_BASE_URL` | Default `https://api.deepseek.com/v1` |
+| `MODEL_NAME` | Default `deepseek-chat` |
+
+The model is used only for reading comprehension — locating the span. It is never the
+authority: its output is checked by code afterwards, and anything it cannot support with a
+verbatim quote is discarded.
+
+## License
+
+MIT

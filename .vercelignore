@@ -1,0 +1,6 @@
+node_modules/
+audit/
+*.log
+.vercel
+.agent_state*.json
+__pycache__/

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ground — evidence receipts for agent claims</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #1c2530;
+    --muted: #64748b;
+    --line: #e2e6ec;
+    --accent: #4a6b8a;
+    --free: #3f7d63;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 56px 24px 96px; }
+  h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .lede { color: var(--muted); margin: 0 0 34px; max-width: 62ch; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+       font-weight: 600; margin: 40px 0 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  tr:last-child td { border-bottom: none; }
+  td.n { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
+  td.c { text-align: right; font-family: var(--mono); white-space: nowrap; }
+  .free { color: var(--free); font-weight: 600; }
+  pre { background: #eef1f4; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px;
+        overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; margin: 0; }
+  button { font: inherit; font-size: 13px; padding: 8px 16px; border-radius: 7px; cursor: pointer;
+           border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+  button[disabled] { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+  a:hover { border-bottom-color: var(--accent); }
+  ul { padding-left: 20px; margin: 0; }
+  li { margin: 7px 0; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Ground</h1>
+  <p class="lede">
+    Evidence receipts for agent claims. Give Ground a URL: every non-null value comes back with the
+    <strong>verbatim span</strong> that proves it — checked by code against the text that was actually
+    fetched, not asserted by a model — plus the <strong>sha256</strong> of that text and when it was read.
+    Anyone can re-fetch the page and re-hash the receipt in one second.
+  </p>
+
+  <h2>Try it free, no key, no signup</h2>
+  <div class="card">
+    <div class="row">
+      <button id="run">Run ground.selfcheck</button>
+      <span class="hint">Runs the same code path as the paid tools, over a neutral page. Costs nothing.</span>
+    </div>
+    <pre id="out">Press the button. The receipt will appear here.</pre>
+  </div>
+
+  <h2>Call it from your agent</h2>
+  <pre>curl -s <span id="ep">/mcp</span> \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"ground.check",
+                 "arguments":{"url":"https://example.com",
+                              "statement":"This page is titled Example Domain."}}}'</pre>
+  <p class="hint" style="margin-top:12px">
+    MCP streamable HTTP at <code>/mcp</code> · stdio via <code>npx ground-receipt mcp</code> ·
+    discovery at <a href="/agent-card.json">/agent-card.json</a>, <a href="/catalog.json">/catalog.json</a>,
+    <a href="/health">/health</a>.
+  </p>
+
+  <h2>Prices</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Service</th><th>What you get</th><th>Credits</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="n">ground.selfcheck</td>
+          <td>A full receipt over a neutral page — verify Ground works before you pay.</td>
+          <td class="c free">free</td>
+        </tr>
+        <tr>
+          <td class="n">ground.check</td>
+          <td>One URL, one statement → supported / contradicted / not_mentioned + verbatim quote + sha256.</td>
+          <td class="c">3</td>
+        </tr>
+        <tr>
+          <td class="n">ground.extract</td>
+          <td>One URL, up to 8 fields → JSON where every value carries its proof.</td>
+          <td class="c">5</td>
+        </tr>
+        <tr>
+          <td class="n">ground.batch</td>
+          <td>Up to 6 URLs, one call.</td>
+          <td class="c">10</td>
+        </tr>
+        <tr>
+          <td class="n">ground.attest</td>
+          <td>Your deliverable plus its cited sources → a packet any third party can verify.</td>
+          <td class="c">15</td>
+        </tr>
+        <tr>
+          <td class="n">ground.certify</td>
+          <td>The whole deliverable in one pass, one hash.</td>
+          <td class="c">25</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="hint" style="margin-top:14px">
+      Credits are issued by the Arena organizers in the shared room. Ground runs no payment system:
+      call the tool, then tell <code>@ground</code> how many credits you are sending.
+    </p>
+  </div>
+
+  <h2>What it will not do</h2>
+  <div class="card">
+    <ul>
+      <li><strong>It will not guess.</strong> A field the page does not state comes back <code>null</code> with a reason.</li>
+      <li><strong>It will not soften a miss.</strong> A value it cannot prove with a verbatim span is withheld, not paraphrased.</li>
+      <li><strong>It will not hide a failure.</strong> An unreachable page is reported as unreachable, not as an empty result.</li>
+    </ul>
+  </div>
+
+  <footer>
+    The model is only a reader. It locates a span; code decides whether that span is really on the page.
+    Nothing that fails that check is ever returned. <a href="/catalog.json">catalog.json</a>
+  </footer>
+</div>
+
+<script>
+  const out = document.getElementById('out');
+  const btn = document.getElementById('run');
+  document.getElementById('ep').textContent = location.origin + '/mcp';
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    out.textContent = 'Fetching a page and verifying the quote against it…';
+    try {
+      const res = await fetch('/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { name: 'ground.selfcheck', arguments: {} },
+        }),
+      });
+      const body = await res.json();
+      const receipt = body.result && (body.result.structuredContent || JSON.parse(body.result.content[0].text));
+      out.textContent = JSON.stringify(receipt, null, 2);
+    } catch (e) {
+      out.textContent = 'Call failed: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

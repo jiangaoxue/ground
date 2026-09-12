@@ -1,0 +1,435 @@
+// ============================================================
+// ground.js — the grounding engine.
+//
+// The product in one sentence:
+//   you give a URL and a list of fields; you get back JSON where
+//   every non-null value carries the verbatim span of the page that
+//   proves it, and that span was checked by code — not by the model.
+//
+// Why that matters to a buyer: the result is checkable in one second
+// without trusting the seller. Values that cannot be proven come back
+// as null with a reason. We never guess, and we never dress up a miss
+// as a hit.
+// ============================================================
+
+import { createHash } from 'node:crypto';
+import { fetchPage, normalizeText, alnum } from './page.js';
+import { chatJson, modelReady, modelInfo } from './model.js';
+
+const MAX_FIELDS = 12;
+const MIN_QUOTE_ALNUM = 8;
+
+function fieldList(fields) {
+  if (!Array.isArray(fields) || fields.length === 0) {
+    throw new Error('input.fields (non-empty array of names, or {name,type,hint}) is required');
+  }
+  return fields.slice(0, MAX_FIELDS).map((f) => {
+    if (typeof f === 'string') return { name: f.slice(0, 60), type: 'auto', hint: null };
+    const name = String(f?.name || '').slice(0, 60);
+    if (!name) throw new Error('every field needs a name');
+    return {
+      name,
+      type: String(f?.type || 'auto').slice(0, 20),
+      hint: f?.hint ? String(f.hint).slice(0, 160) : null,
+    };
+  });
+}
+
+// Code-side verification of a quote against the page we already fetched.
+// Tolerance: punctuation, quote style, whitespace, separators.
+// Intolerance: any character sequence that is not actually on the page.
+export function verifyQuote(quote, pageText) {
+  const q = String(quote || '').trim();
+  if (!q) return { verified: false, reason: 'no_quote' };
+  const aq = alnum(q);
+  if (aq.length < MIN_QUOTE_ALNUM) return { verified: false, reason: 'quote_too_short' };
+  const hay = alnum(pageText);
+  if (hay.includes(aq)) return { verified: true, reason: 'verbatim_in_source' };
+  return { verified: false, reason: 'quote_not_in_source' };
+}
+
+function valuePresent(value, pageText) {
+  const av = alnum(value);
+  if (av.length < 2) return false;
+  return alnum(pageText).includes(av);
+}
+
+const EXTRACT_SYSTEM = `You are a strict field extractor. You are given the plain text of one web page and a list of fields.
+
+Rules you must follow exactly:
+1. For each field, find the value IN THE GIVEN TEXT ONLY. You have no other knowledge of this page.
+2. You must also copy a "quote": a VERBATIM consecutive span copied character-for-character from the given text, at least 20 characters long, that contains the value. Do not paraphrase, do not fix spelling, do not merge two separate places in the text.
+3. If the field is not stated in the given text, return {"value": null, "quote": null}. Do not infer, do not estimate, do not use typical values.
+4. Preserve the value as written (keep currency symbols, units, original date format). Do not translate.
+5. Replies are JSON only, no prose, no markdown fences.
+
+Output shape:
+{"fields":{"<name>":{"value":"<string or null>","quote":"<verbatim span or null>"}}}`;
+
+function userPrompt(page, fields) {
+  const spec = fields
+    .map((f) => `- ${f.name} (type: ${f.type}${f.hint ? `, hint: ${f.hint}` : ''})`)
+    .join('\n');
+  return `PAGE URL: ${page.url}
+PAGE TITLE: ${page.title || '(none)'}
+
+PAGE TEXT:
+"""
+${page.text}
+"""
+
+FIELDS TO EXTRACT:
+${spec}
+
+Return the JSON object now.`;
+}
+
+// --- Service: ground.extract (1 credit) ---
+export async function extract(input) {
+  const url = input?.url;
+  if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+    throw new Error('input.url (http/https string) is required');
+  }
+  const fields = fieldList(input?.fields);
+  const page = await fetchPage(url, { maxChars: Math.min(Math.max(Number(input?.max_chars) || 14000, 1000), 40000) });
+
+  const base = {
+    ok: true,
+    service: 'ground.extract',
+    source: {
+      url: page.url,
+      status: page.status,
+      reachable: page.reachable,
+      title: page.title,
+      content_type: page.content_type,
+      bytes: page.bytes,
+      chars_read: page.chars_read,
+      truncated: page.truncated,
+      text_sha256: page.text_sha256,
+      fetched_at: page.fetched_at,
+      elapsed_ms: page.elapsed_ms,
+      error: page.error,
+    },
+    fields: {},
+  };
+
+  if (!page.reachable || !page.ok || !page.text) {
+    for (const f of fields) {
+      base.fields[f.name] = { value: null, grounded: false, reason: 'source_unavailable' };
+    }
+    base.grounding = { verified: 0, not_found: 0, ungrounded: fields.length, total: fields.length, ratio: 0 };
+    base.note = 'The source could not be read. Nothing was extracted. This is a miss, not a result.';
+    return base;
+  }
+
+  let raw = null;
+  let modelFailed = false;
+  const info = modelInfo();
+  if (!modelReady()) {
+    modelFailed = true;
+  } else {
+    try {
+      raw = await chatJson(
+        [
+          { role: 'system', content: EXTRACT_SYSTEM },
+          { role: 'user', content: userPrompt(page, fields) },
+        ],
+        { timeoutMs: Number(input?.model_timeout_ms) || 30000, maxTokens: 1600 }
+      );
+    } catch {
+      modelFailed = true;
+    }
+  }
+
+  const rawFields = raw && typeof raw.fields === 'object' && raw.fields ? raw.fields : {};
+  let verified = 0;
+  let notFound = 0;
+  let ungrounded = 0;
+
+  for (const f of fields) {
+    if (modelFailed) {
+      base.fields[f.name] = { value: null, grounded: false, reason: 'extractor_unavailable' };
+      ungrounded++;
+      continue;
+    }
+    const entry = rawFields[f.name] || {};
+    const value = entry.value === null || entry.value === undefined ? null : String(entry.value).slice(0, 500);
+    const quote = entry.quote === null || entry.quote === undefined ? null : String(entry.quote).slice(0, 600);
+
+    if (value === null && !quote) {
+      base.fields[f.name] = { value: null, grounded: false, reason: 'not_stated_on_page' };
+      notFound++;
+      continue;
+    }
+
+    const check = verifyQuote(quote, page.text);
+    if (!check.verified) {
+      base.fields[f.name] = {
+        value: null,
+        grounded: false,
+        reason: check.reason,
+        rejected_value: value,
+        value_text_found_on_page: value ? valuePresent(value, page.text) : false,
+        note: 'A value was proposed but could not be proven with a verbatim span, so it is withheld.',
+      };
+      ungrounded++;
+      continue;
+    }
+
+    base.fields[f.name] = {
+      value,
+      grounded: true,
+      quote,
+      quote_check: check.reason,
+      verified_at: new Date().toISOString(),
+    };
+    verified++;
+  }
+
+  base.grounding = {
+    verified,
+    not_found: notFound,
+    ungrounded,
+    total: fields.length,
+    ratio: Number((verified / fields.length).toFixed(3)),
+  };
+  base.extractor = info;
+  base.note =
+    'Every non-null value carries a quote that code checked against the fetched text. Null means we did not find it or could not prove it — we never guess. Re-fetch the URL and compare source.text_sha256 to audit this payload.';
+  return base;
+}
+
+// --- Service: ground.check (1 credit) ---
+// The buyer wants to know whether a specific statement is actually
+// supported by a specific source. We fetch, ask, then verify the
+// model's own evidence. An unprovable judgement is returned as such.
+const CHECK_SYSTEM = `You decide whether a page SUPPORTS, CONTRADICTS, or does NOT MENTION a statement.
+
+Answer only from the given text. Reply JSON only:
+{"verdict":"supported"|"contradicted"|"not_mentioned","quote":"<verbatim span from the text, >=20 chars, that justifies the verdict, or null if not_mentioned>","understanding":"<one short sentence, <=25 words, on what the page actually says about this>"}
+
+Rules: if you cannot find a verbatim span that justifies a verdict of supported or contradicted, you must answer "not_mentioned". Never use outside knowledge.`;
+
+export async function check(input) {
+  const url = input?.url;
+  const statement = String(input?.statement || input?.claim || '').slice(0, 600);
+  if (!url || !/^https?:\/\//i.test(String(url))) throw new Error('input.url (http/https string) is required');
+  if (!statement) throw new Error('input.statement is required');
+
+  const page = await fetchPage(String(url), { maxChars: 18000 });
+  const base = {
+    ok: true,
+    service: 'ground.check',
+    statement,
+    source: {
+      url: page.url,
+      status: page.status,
+      reachable: page.reachable,
+      title: page.title,
+      text_sha256: page.text_sha256,
+      fetched_at: page.fetched_at,
+      elapsed_ms: page.elapsed_ms,
+      error: page.error,
+    },
+  };
+
+  if (!page.reachable || !page.ok || !page.text) {
+    return { ...base, verdict: 'source_unavailable', quote: null, note: 'The source could not be read. No judgement was made.' };
+  }
+  if (!modelReady()) {
+    return { ...base, verdict: 'extractor_unavailable', quote: null, note: 'No extractor configured; nothing was judged.' };
+  }
+
+  let out = null;
+  try {
+    out = await chatJson(
+      [
+        { role: 'system', content: CHECK_SYSTEM },
+        { role: 'user', content: `STATEMENT: ${statement}\n\nPAGE TEXT:\n"""\n${page.text}\n"""\n\nReturn the JSON object now.` },
+      ],
+      { timeoutMs: 30000, maxTokens: 700 }
+    );
+  } catch {
+    return { ...base, verdict: 'extractor_unavailable', quote: null, note: 'The extractor call failed; nothing was judged.' };
+  }
+
+  const verdict = ['supported', 'contradicted', 'not_mentioned'].includes(out?.verdict) ? out.verdict : 'not_mentioned';
+  const quote = out?.quote ? String(out.quote).slice(0, 600) : null;
+
+  if (verdict === 'not_mentioned') {
+    return {
+      ...base,
+      verdict,
+      quote: null,
+      understanding: out?.understanding ? String(out.understanding).slice(0, 200) : null,
+      note: 'The page does not state this. That is not the same as the statement being false.',
+    };
+  }
+
+  const v = verifyQuote(quote, page.text);
+  if (!v.verified) {
+    return {
+      ...base,
+      verdict: 'unverified',
+      proposed_verdict: verdict,
+      quote: null,
+      reason: v.reason,
+      note: 'A judgement was proposed but its own evidence could not be found in the fetched text, so it is withheld.',
+    };
+  }
+
+  return {
+    ...base,
+    verdict,
+    quote,
+    quote_check: 'verbatim_in_source',
+    understanding: out?.understanding ? String(out.understanding).slice(0, 200) : null,
+    verified_at: new Date().toISOString(),
+    note: 'The verdict is backed by a span that code found in the fetched text.',
+  };
+}
+
+// --- Service: ground.attest (2 credits) ---
+//
+// The one thing a buyer cannot produce for itself, no matter how capable
+// it is: a third party's word about its own work. Self-attestation is
+// worth nothing. So a seller hands us its finished deliverable plus the
+// sources it cites; we fetch each source, check each claim, and return a
+// signed-by-hash packet it can attach to what it ships.
+export async function attest(input) {
+  const claims = Array.isArray(input?.claims) ? input.claims.slice(0, 8) : null;
+  if (!claims || claims.length === 0) {
+    throw new Error('input.claims (non-empty array of {statement, url}) is required');
+  }
+
+  const results = await Promise.all(
+    claims.map(async (c, i) => {
+      const statement = String(c?.statement || c?.claim || '').slice(0, 400);
+      const url = c?.url ? String(c.url) : null;
+      try {
+        const r = await check({ url, statement });
+        return {
+          index: i,
+          statement,
+          url,
+          verdict: r.verdict,
+          quote: r.quote || null,
+          understanding: r.understanding || null,
+          source_status: r.source?.status ?? null,
+          fetched_at: r.source?.fetched_at || null,
+          text_sha256: r.source?.text_sha256 || null,
+        };
+      } catch (e) {
+        return { index: i, statement, url, verdict: 'error', error: String(e?.message || e).slice(0, 200) };
+      }
+    })
+  );
+
+  const tally = results.reduce((a, r) => ((a[r.verdict] = (a[r.verdict] || 0) + 1), a), {});
+  const total = results.length;
+  const grounded = tally.supported || 0;
+  const packet = results.map((r) => ({ statement: r.statement, url: r.url, verdict: r.verdict, quote: r.quote }));
+  const packet_sha256 = createHash('sha256').update(JSON.stringify(packet)).digest('hex');
+
+  return {
+    ok: true,
+    service: 'ground.attest',
+    attestation: {
+      grounded,
+      contradicted: tally.contradicted || 0,
+      not_mentioned: tally.not_mentioned || 0,
+      unverified: tally.unverified || 0,
+      unavailable: (tally.source_unavailable || 0) + (tally.extractor_unavailable || 0) + (tally.error || 0),
+      total,
+      ratio: Number((grounded / total).toFixed(3)),
+      packet_sha256,
+      issued_at: new Date().toISOString(),
+    },
+    deliverable_line: `Independently checked ${total} claim${total === 1 ? '' : 's'} against the cited sources: ${grounded} grounded verbatim, ${tally.not_mentioned || 0} not stated by the source cited, ${tally.contradicted || 0} contradicted, ${tally.unverified || 0} unprovable. Attestation ${packet_sha256.slice(0, 12)}.`,
+    claims: results,
+    note: 'This attests only that the statements do or do not appear in the sources cited, as fetched at the timestamps above. It says nothing about quality, price or intent. Re-fetch the sources and hash the packet to verify this document.',
+  };
+}
+
+// --- Service: ground.batch (2 credits) ---
+export async function batch(input) {
+  const items = Array.isArray(input?.items) ? input.items.slice(0, 6) : null;
+  if (!items || items.length === 0) throw new Error('input.items (non-empty array of {url, fields}) is required');
+  const results = await Promise.all(
+    items.map(async (it, i) => {
+      try {
+        return await extract({ ...it, model_timeout_ms: input?.model_timeout_ms });
+      } catch (e) {
+        return { ok: false, service: 'ground.extract', index: i, url: it?.url || null, error: String(e?.message || e).slice(0, 200) };
+      }
+    })
+  );
+  return {
+    ok: true,
+    service: 'ground.batch',
+    count: results.length,
+    succeeded: results.filter((r) => r.ok && r.grounding && r.grounding.verified > 0).length,
+    results,
+    note: 'One call, many sources. Every item is grounded by the same rules as ground.extract.',
+  };
+}
+
+// --- Service: ground.certify (10 credits) ---
+//
+// The premium tier. In this market a buyer does not save credits — it must
+// spend them all before the round closes. That changes what the largest
+// useful purchase looks like: not one more opinion, but the biggest block
+// of verifiable work a single call can absorb. certify takes a whole
+// deliverable — every source it cites and every claim it makes — reads each
+// source now, tests each claim against the source it names, and returns one
+// ship-ready packet with a single hash over the lot. Nothing new is
+// promised; it composes the same gates as extract and attest, at the size a
+// buyer actually needs when it is about to ship.
+export async function certify(input) {
+  const sources = Array.isArray(input?.sources) ? input.sources.slice(0, 6) : [];
+  const claims = Array.isArray(input?.claims) ? input.claims.slice(0, 10) : [];
+  if (sources.length === 0 && claims.length === 0) {
+    throw new Error('input.sources (array of {url,fields}) and/or input.claims (array of {statement,url}) is required');
+  }
+
+  const [extractions, attestation] = await Promise.all([
+    sources.length
+      ? batch({ items: sources.map((s) => ({ url: s?.url, fields: s?.fields })) })
+      : Promise.resolve({ count: 0, succeeded: 0, results: [] }),
+    claims.length ? attest({ claims }) : Promise.resolve(null),
+  ]);
+
+  const packetBody = {
+    sources: extractions.results.map((r) => ({
+      url: r?.source?.url || r?.url || null,
+      text_sha256: r?.source?.text_sha256 || null,
+      grounding: r?.grounding || null,
+    })),
+    claims: attestation
+      ? attestation.claims.map((c) => ({ statement: c.statement, url: c.url, verdict: c.verdict, quote: c.quote }))
+      : [],
+  };
+  const packet_sha256 = createHash('sha256').update(JSON.stringify(packetBody)).digest('hex');
+
+  const values_grounded = extractions.results.reduce((s, r) => s + (r?.grounding?.verified || 0), 0);
+  const claims_checked = attestation ? attestation.attestation.total : 0;
+  const claims_grounded = attestation ? attestation.attestation.grounded : 0;
+
+  return {
+    ok: true,
+    service: 'ground.certify',
+    certification: {
+      sources_read: extractions.count,
+      sources_grounded: extractions.succeeded,
+      values_grounded,
+      claims_checked,
+      claims_grounded,
+      packet_sha256,
+      issued_at: new Date().toISOString(),
+    },
+    deliverable_line: `Independently read ${extractions.count} cited source${extractions.count === 1 ? '' : 's'} and checked ${claims_checked} claim${claims_checked === 1 ? '' : 's'} against them: ${claims_grounded} grounded verbatim, ${values_grounded} extracted value${values_grounded === 1 ? '' : 's'} each carrying a verifiable quote. Certification ${packet_sha256.slice(0, 12)}.`,
+    sources: extractions.results,
+    claims: attestation ? attestation.claims : [],
+    note: 'The whole deliverable checked in one pass: every cited source read now, every claim tested against the source it names, one hash over the packet. Re-fetch the sources and hash it to verify. It attests appearance in the cited sources, not quality, price or intent.',
+  };
+}

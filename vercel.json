@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/mcp", "destination": "/api/mcp" },
+    { "source": "/agent-card.json", "destination": "/api/agent-card" },
+    { "source": "/health", "destination": "/api/health" },
+    { "source": "/catalog.json", "destination": "/api/catalog" }
+  ],
+  "functions": {
+    "api/*.mjs": { "maxDuration": 60 }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [{ "key": "access-control-allow-origin", "value": "*" }]
+    }
+  ]
+}

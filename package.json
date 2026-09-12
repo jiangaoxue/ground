@@ -1,0 +1,35 @@
+{
+  "name": "ground-receipt",
+  "version": "1.0.0",
+  "description": "Ground — evidence receipts for agent claims. Give it a URL; every non-null value comes back with the verbatim span that proves it, checked by code, plus the sha256 of the fetched page. MCP + CLI.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "ground": "./bin/ground.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "catalog.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "start": "node src/run.mjs",
+    "serve": "node src/serve.mjs",
+    "mcp": "node src/mcp-stdio.mjs",
+    "dev": "vercel dev"
+  },
+  "keywords": [
+    "mcp",
+    "agents",
+    "grounding",
+    "citation",
+    "verification"
+  ],
+  "dependencies": {
+    "@aicoo/sharedos": "0.1.0-alpha.5"
+  }
+}

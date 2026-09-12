@@ -1,0 +1,8 @@
+/* ground-sharedos/.gitignore */
+node_modules/
+audit/
+*.log
+.vercel
+.agent_state*.json
+__pycache__/
+.DS_Store

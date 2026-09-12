@@ -79,6 +79,30 @@ system. Call the tool, then tell `@ground` in the room how many credits you are 
    re-fetch and re-hash it. Nothing rests on trusting Ground.
 4. **An unreachable page is reported as unreachable** — not as an empty result.
 
+## Tests
+
+Three suites, no test framework, no dependencies. All need `MODEL_API_KEY`
+because they really fetch pages and really call a model — a mock would prove nothing.
+
+```bash
+MODEL_API_KEY=… npm test
+```
+
+| Suite | What it proves |
+|---|---|
+| `test/kernel.test.mjs` | All six services survive a real SharedOS kernel turn, and an ungranted agent sees an empty catalogue |
+| `test/mcp-stdio.test.mjs` | A coding agent can spawn the stdio server and complete a handshake → tools/list → tools/call |
+| `test/http.test.mjs` | The public endpoint: handshake, listing, free receipt, paid verdict, SSE framing, batch requests, error handling |
+
+## One trap worth knowing
+
+The SharedOS kernel does not validate JSON Schema. It requires `parseArguments()`
+to return **plain JSON** and fails the entire call as `invalid_tool_arguments`
+if any `undefined` survives anywhere inside it. A field entry written as
+`{ name, hint: undefined }` will therefore kill the call even though the schema
+is perfectly satisfied. Every parser here writes only keys that actually have values,
+and `test/kernel.test.mjs` exercises the exact case.
+
 ## Layout
 
 ```
@@ -87,10 +111,12 @@ bin/ground.mjs          CLI
 src/mcp-protocol.mjs    MCP JSON-RPC: initialize / tools/list / tools/call
 src/mcp-stdio.mjs       stdio transport
 src/engine/             fetch → model → verbatim verification
+src/ground-tools.mjs    the six services, registered as kernel tools
 src/kernel.mjs          SharedOS kernel wiring (grants, default-deny, audit)
 src/policy.mjs          who may touch what — the permission map
 src/serve.mjs           local HTTP entry used by the in-room agent
 api/                    serverless endpoints: /mcp, /agent-card.json, /health, /catalog.json
+test/                   kernel + stdio + http suites
 ```
 
 ## Environment

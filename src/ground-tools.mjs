@@ -59,6 +59,25 @@ const FIELDS = {
 
 const obj = (props, required) => ({ type: "object", additionalProperties: false, required, properties: props });
 
+// parseArguments 必须返回**纯 JSON**。内核不校验 JSON Schema，但它会把解析结果
+// 过一遍 JSON 往返；任何一个 `undefined` 都会让整条调用被判 invalid_tool_arguments。
+// 所以拼字段时只写确实有值的键，绝不写 `hint: undefined`。
+function cleanFields(list, key = "fields") {
+  return (Array.isArray(list) ? list : []).slice(0, 8).map((f) => {
+    const item = { name: String(f?.name || "") };
+    if (!item.name) throw new Error(`${key}: every entry needs a name`);
+    if (f?.hint) item.hint = String(f.hint).slice(0, 160);
+    return item;
+  });
+}
+
+function cleanClaims(list) {
+  return (Array.isArray(list) ? list : []).slice(0, 10).map((c) => ({
+    statement: String(c?.statement || c?.claim || "").slice(0, 400),
+    url: String(c?.url || ""),
+  }));
+}
+
 const SPECS = [
   {
     name: "ground.check",
@@ -84,10 +103,7 @@ const SPECS = [
     parse: (a) => {
       const url = String(a.url || "");
       if (!/^https?:\/\//i.test(url)) throw new Error("url must be http/https");
-      const fields = (Array.isArray(a.fields) ? a.fields : []).map((f) => ({
-        name: String(f?.name || ""),
-        hint: f?.hint ? String(f.hint) : undefined,
-      }));
+      const fields = cleanFields(a.fields);
       if (!fields.length) throw new Error("fields (non-empty array) is required");
       return { url, fields };
     },
@@ -99,8 +115,13 @@ const SPECS = [
     schema: obj({ items: { type: "array", minItems: 1, maxItems: 6, items: obj({ url: URL_STR, fields: FIELDS }, ["url", "fields"]) } }, ["items"]),
     description: "Up to six URLs in one call, each grounded by the same rules as ground.extract.",
     parse: (a) => {
-      const items = (Array.isArray(a.items) ? a.items : []).slice(0, 6);
-      if (!items.length) throw new Error("items (non-empty array of {url, fields}) is required");
+      const raw = (Array.isArray(a.items) ? a.items : []).slice(0, 6);
+      if (!raw.length) throw new Error("items (non-empty array of {url, fields}) is required");
+      const items = raw.map((it) => {
+        const url = String(it?.url || "");
+        if (!/^https?:\/\//i.test(url)) throw new Error("every item needs an http/https url");
+        return { url, fields: cleanFields(it?.fields) };
+      });
       return { items };
     },
     run: (args) => engineBatch(args),
@@ -122,7 +143,7 @@ const SPECS = [
     description:
       "Read each cited source now and test each claim against the source named for it, then return one packet with a single hash. A seller cannot produce this for itself: self-attestation is worth nothing.",
     parse: (a) => {
-      const claims = (Array.isArray(a.claims) ? a.claims : []).slice(0, 8);
+      const claims = cleanClaims(a.claims).filter((c) => c.statement && c.url);
       if (!claims.length) throw new Error("claims (non-empty array of {statement, url}) is required");
       return { claims };
     },
@@ -145,8 +166,12 @@ const SPECS = [
     description:
       "The whole deliverable in one pass: every cited source read now, every claim tested against the source it names, one hash over the lot.",
     parse: (a) => {
-      const sources = (Array.isArray(a.sources) ? a.sources : []).slice(0, 6);
-      const claims = (Array.isArray(a.claims) ? a.claims : []).slice(0, 10);
+      const sources = (Array.isArray(a.sources) ? a.sources : []).slice(0, 6).map((s) => {
+        const url = String(s?.url || "");
+        if (!/^https?:\/\//i.test(url)) throw new Error("every source needs an http/https url");
+        return { url, fields: cleanFields(s?.fields) };
+      });
+      const claims = cleanClaims(a.claims).filter((c) => c.statement && c.url);
       if (!sources.length && !claims.length) throw new Error("sources and/or claims is required");
       return { sources, claims };
     },

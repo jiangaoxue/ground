@@ -20,6 +20,7 @@
     "start": "node src/run.mjs",
     "serve": "node src/serve.mjs",
     "mcp": "node src/mcp-stdio.mjs",
+    "test": "node test/kernel.test.mjs && node test/mcp-stdio.test.mjs && node test/http.test.mjs",
     "dev": "vercel dev"
   },
   "keywords": [

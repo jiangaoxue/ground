@@ -17,10 +17,23 @@ I return a verdict, the exact words on the page that justify it,
 and the sha256 of the page I read. 3 credits.
 ```
 
+## Run it
+
+```bash
+npm install
+MODEL_API_KEY=… npm start          # hosted: binds 0.0.0.0 on $PORT
+MODEL_API_KEY=… npm run local      # local agent: binds 127.0.0.1:8081 only
+```
+
+Without `PORT` in the environment the server binds the loopback interface and nothing
+else, so the machine that runs the room agent stays unreachable from outside. With
+`PORT` set (any host, any PaaS) it binds `0.0.0.0` and goes through the platform's
+reverse proxy. Same file, same engine, no code path only the server has.
+
 ## Try it free
 
 ```bash
-npx ground-receipt@latest selfcheck
+node bin/ground.mjs selfcheck
 ```
 
 `ground.selfcheck` runs the same code path as the paid tools — one check, one multi-field
@@ -42,15 +55,15 @@ curl -s https://<your-deployment>/mcp \
 **MCP over stdio** (for agents that spawn local servers):
 
 ```bash
-npx ground-receipt@latest mcp
+node bin/ground.mjs mcp
 ```
 
 **CLI**:
 
 ```bash
-npx ground-receipt@latest check https://example.com "the page says …"
-npx ground-receipt@latest extract https://example.com --fields price,title,contact_email
-npx ground-receipt@latest catalog
+node bin/ground.mjs check https://example.com "the page says …"
+node bin/ground.mjs extract https://example.com --fields price,title,contact_email
+node bin/ground.mjs catalog
 ```
 
 Discovery: [`/agent-card.json`](https://example.com) · [`/catalog.json`](https://example.com) · [`/health`](https://example.com)
@@ -114,8 +127,8 @@ src/engine/             fetch → model → verbatim verification
 src/ground-tools.mjs    the six services, registered as kernel tools
 src/kernel.mjs          SharedOS kernel wiring (grants, default-deny, audit)
 src/policy.mjs          who may touch what — the permission map
-src/serve.mjs           local HTTP entry used by the in-room agent
-api/                    serverless endpoints: /mcp, /agent-card.json, /health, /catalog.json
+src/serve.mjs           the HTTP door: loopback for the room agent, 0.0.0.0 when hosted
+api/                    the same door as plain request handlers: /mcp, /agent-card.json, /health, /catalog.json
 test/                   kernel + stdio + http suites
 ```
 
@@ -126,6 +139,15 @@ test/                   kernel + stdio + http suites
 | `MODEL_API_KEY` | Required for the extractor. Any OpenAI-compatible endpoint. |
 | `MODEL_BASE_URL` | Default `https://api.deepseek.com/v1` |
 | `MODEL_NAME` | Default `deepseek-chat` |
+| `PORT` | Set by the host. Its presence is also what switches the bind address to `0.0.0.0`. |
+| `HOST` | Override the bind address explicitly. |
+| `PAID_CAP_PER_DAY` | Total model calls the service will make per UTC day. Default 300. |
+| `PAID_CAP_PER_IP_PER_DAY` | Same, per caller. Default 80. |
+
+The public deployment runs on Ground's own model key, so it is capped: every route that
+reaches the model — including the free tier — draws on one daily budget, and past it the
+service answers `429` instead of spending someone else's quota. The room agent does not go
+through this door; its traffic runs the kernel path on a machine the internet cannot reach.
 
 The model is used only for reading comprehension — locating the span. It is never the
 authority: its output is checked by code afterwards, and anything it cannot support with a

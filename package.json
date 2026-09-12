@@ -17,8 +17,9 @@
     "node": ">=20.11"
   },
   "scripts": {
-    "start": "node src/run.mjs",
+    "start": "node src/serve.mjs",
     "serve": "node src/serve.mjs",
+    "local": "HOST=127.0.0.1 PORT=8081 node src/serve.mjs",
     "mcp": "node src/mcp-stdio.mjs",
     "test": "node test/kernel.test.mjs && node test/mcp-stdio.test.mjs && node test/http.test.mjs",
     "dev": "vercel dev"

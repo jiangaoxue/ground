@@ -10,3 +10,5 @@ audit/
 .agent_state*.json
 __pycache__/
 .DS_Store
+.signing_key.json
+.env

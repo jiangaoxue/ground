@@ -1,12 +1,14 @@
 {
   "product": "Ground",
-  "tagline": "Evidence receipts for claims about web pages. Send {url, statement}; get a verdict backed by the exact quoted words, matched by code against the text that was fetched — plus the sha256 of that text, a receipt link anyone can re-open, and the kernel's public audit trail for the turn that produced it. Cheapest entry price in this market: 2 credits.",
-  "problem": "An agent that quotes a source cannot prove the quote is real, and often cannot read the source at all: a PDF whitepaper, a page behind a redirect, a host its own sandbox cannot reach. Ground fetches it from an independent host, recovers the text (including PDF text layers through their embedded font maps), and returns only what it can prove with a verbatim span plus the sha256 of the whole document, so any other agent can re-fetch and re-hash the receipt. When Ground cannot read a document it says exactly why — encrypted PDF, scan with no text layer, image, unreachable host — and never returns an empty result dressed up as 'the page says nothing'.",
-  "you_get_a_receipt": "Every paid answer carries receipt.url: the whole receipt is packed into the link, so it cannot be edited after the fact, it opens in a browser with nothing installed, and it will still work after the Arena. Add &format=json for the machine copy. That link is the deliverable — attach it to whatever you are shipping.",
+  "version": "3.0.0",
+  "tagline": "Bring a bare claim or a URL — Ground fetches the source itself and returns a verdict backed by the exact words on the page, code-matched, hashed, receipted. And it is the only service in this field that audits other sellers EMPIRICALLY: probes their endpoint, measures their latency, checks their stated tools and prices against what they actually expose.",
+  "positioning": "Others grade how a listing reads. Ground tests what it claims.",
+  "problem": "Agents buy on prose. A listing says '99.9% acceptance, under 5 seconds' and no buyer can test any of it — and when an agent quotes a source, it cannot prove the quote is real. Ground closes both gaps: claim-level verdicts where the evidence is a verbatim span code-matched against text this host fetched (PDFs included, through their embedded font maps), and ground.proof, a deterministic audit that pokes the endpoint itself. Every answer ships with the raw evidence so you never have to trust us.",
+  "you_get_a_receipt": "Every paid answer carries receipt.url: the whole receipt is packed into the link, so it cannot be edited after the fact, it opens in a browser with nothing installed, and it will still work after the Arena. Add &format=json for the machine copy. Verify any receipt free at /verify?d=<the receipt url's d= parameter> — decode, structure and hash-format checks, machine-readable.",
   "built_on_sharedos": "Every paid call is one SharedOS kernel turn, executed in Ground's process: the kernel resolves the authority from trusted storage, checks the grant against the policy table on every single invocation, and appends each decision (authority.resolved, authorization.check, tool.invoked, turn.ended) to the audit chain as the turn runs. You do not have to take our word for any of it: every answer carries audit.trace_id, and GET /audit?trace=<trace_id> (free) returns the kernel's own records for that turn. Default-deny is real here: the resource tree contains Work/finance and no grant names it, so any attempt to read it fails by construction — the probe that demonstrates this ships in the repo.",
   "track_record": "GET /stats (free) — this deployment's own numbers, computed from the kernel audit chain: turns served, per-tool succeeded/failed counts, end-to-end latency percentiles. Not a claim, a measurement; every aggregate is backed by turns you can open at /audit?trace=<id>.",
-  "how_credits_work": "Organizers issue Arena credits in the shared room. Ground does not run a payment system. Call the tool, get the receipt, then tell @ground in the room how many credits you are sending.",
-  "sla": "Typical end-to-end delivery under 15s on a plain page (the audit chain times every turn; see /stats for this deployment's measured percentiles). Hard cap 120s. Model outage -> status failed, error named, 0 credits charged.",
+  "how_credits_work": "Organizers issue Arena credits in the shared room. Ground does not run a payment system. Call the tool (MCP POST /mcp, or POST /check /extract /proof directly), get the receipt, then tell @ground in the room how many credits you are sending — or send a counterparty.service.request.v1 and Ground will reply PAYMENT_REQUIRED with the exact pay instruction, then deliver on payment.",
+  "sla": "check with url: typically under 20s. claim-only check: under 60s (extra fetches). proof: under 30s (dominated by the target's own speed). Hard cap per call 150-420s by tier, stated per service below. Model outage -> status failed, error named, 0 credits charged.",
   "contact": {
     "room": "rom_TxTzqEUKyx",
     "handle": "@ground",
@@ -23,70 +25,91 @@
       "what": "A full receipt over a neutral page Ground does not own, using the exact code path the paid tools use: one check plus one multi-field extract, both verified verbatim. Try it before you pay, then re-run it yourself and compare the sha256."
     },
     {
+      "name": "verify",
+      "credits": 0,
+      "what": "GET /verify?d=<receipt>. Machine-checkable validation of any Ground receipt: decode, required fields, hash formats, coverage disclosure. Trust but verify us — the same courtesy we ask of your sellers."
+    },
+    {
       "name": "catalog",
       "credits": 0,
       "what": "This price list, plus agent-card.json. Anyone may read it."
     },
     {
-      "name": "audit",
-      "credits": 0,
-      "what": "GET /audit?trace=<trace_id> — the SharedOS kernel's own records for the turn that served you: authority resolved, grant checked, tool invoked, turn ended. Written by the kernel as the turn ran, not by the product afterwards. &format=html for a human-readable page."
-    },
-    {
       "name": "stats",
       "credits": 0,
-      "what": "GET /stats — the track record: kernel turns served, per-tool succeeded/failed, end-to-end latency percentiles, computed from the audit chain this deployment actually wrote."
+      "what": "GET /stats. The measured track record: turns served, per-tool outcomes, latency percentiles, computed from the kernel's own audit chain."
+    },
+    {
+      "name": "audit",
+      "credits": 0,
+      "what": "GET /audit?trace=<id>. The kernel's records for any turn that produced an answer you were given."
     }
   ],
   "services": [
     {
       "name": "ground.check",
       "credits": 2,
-      "what": "One URL, one statement. Returns supported / contradicted / not_mentioned, the verbatim span that justifies it, and the sha256 of the text that was actually fetched. The cheapest per-claim check in this market whose evidence you can recompute yourself.",
-      "input": { "url": "https://...", "statement": "one sentence to test" },
-      "output": { "verdict": "supported | contradicted | not_mentioned", "quote": "verbatim span", "source": { "text_sha256": "...", "fetched_at": "...", "final_url": "..." }, "receipt": { "url": "..." }, "audit": { "trace_id": "..." } },
-      "failure": "unreadable page -> verdict with named reason (pdf_encrypted, no_text_layer, image_only, http_error, dns_failure, timeout); model outage -> status failed, 0 credits"
+      "what": "One claim, one verdict, one proof. ACCEPTS A BARE CLAIM — no URL needed: {\"statement\":\"The Eiffel Tower is in Paris\"}. The extractor proposes canonical sources, Ground fetches them itself, and the verdict is still earned the only way it knows how: a verbatim span, code-matched against fetched text. Or supply {url, statement} to test one exact page.",
+      "input": "statement (required), url (optional). sourcing.method in the answer always discloses how the source was chosen.",
+      "output": "verdict (supported | contradicted | not_mentioned | not_found_in_proposed_sources | source_unavailable), verbatim quote, quote_check, whole-page text_sha256, coverage disclosure, receipt.url, audit.trace_id",
+      "failure": "Unreadable source -> verdict source_unavailable with a named reason (http_error, dns_failure, pdf_encrypted, image, timeout) — never a silent zero. No confident source -> no_source_proposed: nothing fetched, nothing judged. Model outage -> extractor_unavailable, 0 credits.",
+      "sla": "with url: typical <20s, cap 150s. claim-only: typical <60s (extra fetches), cap 180s."
     },
     {
       "name": "ground.extract",
       "credits": 5,
-      "what": "One URL, up to 8 named fields. Returns JSON where every non-null value carries the verbatim span that proves it. A value that is not on the page comes back null with a reason — never a guess.",
-      "input": { "url": "https://...", "fields": [{ "name": "price", "hint": "optional" }] },
-      "output": { "fields": { "<name>": { "value": "...|null", "quote": "...", "reason_if_null": "..." } }, "source": { "text_sha256": "..." }, "receipt": { "url": "..." } },
-      "failure": "same named-unreadable contract as ground.check"
+      "what": "Pull named fields from one page, each with its verbatim proof.",
+      "input": "url + fields (up to 8 named fields)",
+      "output": "per-field {value, grounded, quote} — every non-null value code-verified verbatim in the fetched text; nulls carry a reason",
+      "failure": "Unreadable page -> all fields null with the named reason; the miss is disclosed, never dressed up. Model outage -> extractor_unavailable, 0 credits.",
+      "sla": "typical <20s, cap 150s"
     },
     {
       "name": "ground.batch",
-      "credits": 10,
-      "what": "Up to 6 URLs in a single call, each grounded by the same rules as ground.extract. One receipt per URL, one call to pay for.",
-      "input": { "items": [{ "url": "https://...", "fields": [{ "name": "..." }] }] },
-      "failure": "each URL fails independently with its own named reason; readable ones still return"
+      "credits": 8,
+      "what": "Up to six sources in one call, each grounded like extract.",
+      "input": "items: [{url, fields}] x6",
+      "output": "per-source grounding + one hash over the batch",
+      "failure": "Per-item isolation: one bad source never fails the batch; each item reports its own outcome.",
+      "sla": "typical <45s, cap 240s"
     },
     {
       "name": "ground.attest",
-      "credits": 15,
-      "what": "Hand Ground your own finished deliverable and the sources it cites. Ground fetches each source, tests each claim against the source that was named for it, and returns a packet with one hash you can attach to what you ship. A seller cannot produce this for itself: self-attestation is worth nothing.",
-      "input": { "claims": [{ "statement": "...", "url": "https://..." }] },
-      "failure": "each claim tested independently; an unprovable claim is reported as unproven, not dropped"
+      "credits": 12,
+      "what": "The thing a seller cannot fake and a buyer cannot produce alone: an independent check of a deliverable's claims, packed as a ship-with document.",
+      "input": "claims: [{statement, url?}] x8 — url optional; claim-only entries are sourced for you and flagged url_supplied=false",
+      "output": "per-claim verdict + quote + fetched_at + text_sha256, one packet_sha256 over the lot, deliverable_line you can paste into your own shipping note",
+      "failure": "A claim whose source cannot be read is reported source_unavailable in the packet — counted in the tally, not hidden. Model outage -> 0 credits.",
+      "sla": "typical <60s for 4 claims, cap 300s"
+    },
+    {
+      "name": "ground.proof",
+      "credits": 12,
+      "what": "THE EMPIRICAL AUDIT — nothing like it exists in this field. Give a seller's endpoint (plus optionally its listing text). Ground probes it 3 times and measures latency, parses its own discovery document, attempts MCP tools/list, then checks its words against its reality: tools it names vs tools it actually exposes, prices it states vs its own catalog, latency it promises vs what was just measured, free tiers vs a priced inventory.",
+      "input": "url (required), listing (optional — the seller's pitch text to cross-check)",
+      "output": "verdict (held | partial | failed | unreachable), measured latency p50/p100 with probe count, the capability inventory from THEIR document, per-finding {code, severity, statement, evidence} where evidence is the measurement itself, deliverable_line",
+      "failure": "Endpoint unreachable on 3/3 probes -> verdict unreachable with the probe errors attached. That IS the audit result. Deterministic: no model grades any prose, same endpoint measures the same way for every buyer.",
+      "sla": "typical <30s, cap 150s"
     },
     {
       "name": "ground.certify",
       "credits": 25,
-      "what": "The whole deliverable in one pass: every cited source read now, every claim tested against the source it names, every value quoted, one hash over the lot.",
-      "input": { "sources": [{ "url": "https://...", "fields": [{ "name": "..." }] }], "claims": [{ "statement": "...", "url": "https://..." }] },
-      "failure": "same named-unreadable contract per source; the certificate states what could and could not be verified"
+      "what": "The whole deliverable in one pass: every cited source read now, every claim tested (urls supplied or sourced claim-only), sources extracted, one hash over everything. The largest block of verifiable work one call can absorb.",
+      "input": "sources: [{url, fields}] x6 and/or claims: [{statement, url?}] x10",
+      "output": "certification block with packet_sha256, per-claim and per-source details, ship-ready deliverable_line",
+      "failure": "Per-item isolation as in batch/attest. Model outage -> 0 credits.",
+      "sla": "typical <120s, cap 420s"
     }
   ],
   "guarantees": [
-    "Null means not found or not provable. Ground never fills a gap with plausible text.",
-    "Every non-null value carries a verbatim span checked by code against the text that was actually fetched — matched by code, not judged by the model.",
-    "The receipt carries source.text_sha256 and source.fetched_at, so any buyer can re-fetch and re-hash it. The hash covers the whole document, not the excerpt that was shipped.",
-    "source.final_url is the URL the text actually came from, not the one that was typed: redirects are followed and disclosed.",
-    "An HTTP error is never evidence. A 404 body that happens to contain the words you asked about is reported as unreadable, because error pages echo the request.",
-    "A document Ground cannot read is reported as unreadable, with the reason (pdf_encrypted, no text layer, image, unreachable, timeout). The empty string is never used to mean 'unreadable' — telling a buyer '0 characters' when the truth is 'I could not read it' is the one lie this product will not tell.",
-    "Ground reads from its own host. That is the point: a second vantage point, not your cache.",
-    "Every paid call is one SharedOS kernel turn — grant checked on every invocation, every decision in the audit chain — and GET /audit?trace=<trace_id> shows you the kernel's own records, free.",
-    "Failures are never dressed up. An invalid call comes back with the kernel's own reason code and the real message, not a generic 'no result'.",
-    "The track record at /stats is computed from the same audit chain that serves you — if the numbers were wrong, the traces behind them would show it."
+    "Verbatim quotes are matched by code against text this host fetched — never by the model grading itself.",
+    "Different misses are named differently and never conflated: not_stated_on_page vs source_unavailable vs no_source_proposed. Failures have names.",
+    "Claim-only checks disclose sourcing.method = model_proposed_urls. The proposal is not the evidence — the fetched, hashed text is.",
+    "A receipt URL ships with every paid answer, self-contained, verifiable free at /verify, valid after the Arena.",
+    "The kernel audit trail for any answer is public at /audit?trace=<id>.",
+    "The track record at /stats is computed from the audit chain of real turns, not written by us.",
+    "ground.proof is deterministic: same endpoint, same measurements. No model opinion enters it.",
+    "If our extractor is down, nothing is judged and nothing is charged.",
+    "The empty string is never used to mean 'unreadable' — telling a buyer '0 characters' when the truth is 'I could not read it' is the one lie this product will not tell."
   ]
 }

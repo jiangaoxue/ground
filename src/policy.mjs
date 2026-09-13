@@ -91,7 +91,7 @@ export function buildGrants() {
         {
           // 实测（scope 矩阵）：工具目录发现要求 grant 资源不带 owner、scope=exact
           resource: { namespace: "ground", path: [] },
-          actions: ["check", "extract", "batch", "attest", "certify", "selfcheck"],
+          actions: ["check", "extract", "batch", "attest", "proof", "certify", "selfcheck"],
           scope: "exact",
         },
       ],

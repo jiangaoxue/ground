@@ -9,12 +9,13 @@
 // 授权表因此就是产品的价目表在内核里的镜像——卖什么，就必须先授权什么。
 
 import {
-  check as engineCheck,
+  claimCheck as engineClaimCheck,
   extract as engineExtract,
   batch as engineBatch,
   attest as engineAttest,
   certify as engineCertify,
 } from "./engine/ground.js";
+import { proof as engineProof } from "./engine/proof.js";
 import { callSelfcheck } from "./mcp-protocol.mjs";
 import { withReceipt, publicBase } from "./receipt.mjs";
 
@@ -94,17 +95,25 @@ const SPECS = [
   {
     name: "ground.check",
     action: "check",
-    schema: obj({ url: URL_STR, statement: { type: "string", minLength: 1, maxLength: 600 } }, ["url", "statement"]),
+    schema: obj(
+      {
+        url: URL_STR,
+        statement: { type: "string", minLength: 1, maxLength: 600 },
+      },
+      ["statement"]
+    ),
     description:
-      "Test one statement against one web page. Fetches the page, asks the model to locate the supporting span, then verifies that span against the fetched text BY CODE. Returns verdict + verbatim quote + sha256 of the page text.",
+      "Test one statement against one web page — or with NO url: the extractor proposes canonical source pages, this host fetches them, and the verdict is still earned by a verbatim span code-matched against fetched text. Returns verdict + verbatim quote + sha256 + receipt url. The sourcing method is always disclosed.",
     parse: (a) => {
-      const url = String(a.url || "");
+      const url = a.url ? String(a.url) : null;
       const statement = String(a.statement || a.claim || "");
-      if (!/^https?:\/\//i.test(url)) throw new Error("url must be http/https");
-      if (!statement) throw new Error("statement is required");
-      return { url, statement: statement.slice(0, 600) };
+      if (url && !/^https?:\/\//i.test(url)) throw new Error("url, when supplied, must be http/https");
+      if (!statement) throw new Error("statement (or claim) is required");
+      const out = { statement: statement.slice(0, 600) };
+      if (url) out.url = url;
+      return out;
     },
-    run: (args) => engineCheck(args),
+    run: (args) => engineClaimCheck(args),
   },
   {
     name: "ground.extract",
@@ -153,13 +162,28 @@ const SPECS = [
       ["claims"]
     ),
     description:
-      "Read each cited source now and test each claim against the source named for it, then return one packet with a single hash. A seller cannot produce this for itself: self-attestation is worth nothing.",
+      "Read each cited source now and test each claim against the source named for it, then return one packet with a single hash. Claims without a url are sourced the same claim-only way as ground.check. A seller cannot produce this for itself: self-attestation is worth nothing.",
     parse: (a) => {
-      const claims = cleanClaims(a.claims).filter((c) => c.statement && c.url);
-      if (!claims.length) throw new Error("claims (non-empty array of {statement, url}) is required");
+      const claims = cleanClaims(a.claims).filter((c) => c.statement);
+      if (!claims.length) throw new Error("claims (non-empty array of {statement, url?}) is required");
       return { claims };
     },
     run: (args) => engineAttest(args),
+  },
+  {
+    name: "ground.proof",
+    action: "proof",
+    schema: obj({ url: URL_STR, listing: { type: "string", maxLength: 4000 } }, ["url"]),
+    description:
+      "The empirical audit: probe the endpoint 3 times and measure latency, parse its own discovery document, attempt MCP tools/list, then cross-check the listing text it published against what was measured (tools named vs exposed, prices stated vs catalog, latency promised vs measured). Deterministic — no model grades any prose. Unique in this field.",
+    parse: (a) => {
+      const url = String(a.url || "");
+      if (!/^https?:\/\//i.test(url)) throw new Error("url (http/https) is required");
+      const out = { url };
+      if (a.listing) out.listing = String(a.listing).slice(0, 4000);
+      return out;
+    },
+    run: (args) => engineProof(args),
   },
   {
     name: "ground.certify",
@@ -183,7 +207,7 @@ const SPECS = [
         if (!/^https?:\/\//i.test(url)) throw new Error("every source needs an http/https url");
         return { url, fields: cleanFields(s?.fields) };
       });
-      const claims = cleanClaims(a.claims).filter((c) => c.statement && c.url);
+      const claims = cleanClaims(a.claims).filter((c) => c.statement);
       if (!sources.length && !claims.length) throw new Error("sources and/or claims is required");
       return { sources, claims };
     },

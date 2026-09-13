@@ -57,12 +57,12 @@ try {
   const h = await fetch(base + '/health');
   const hj = await h.json();
   assert('GET /health is ok', h.status === 200 && hj.ok === true);
-  assert('GET /health lists all six tools', (hj.tools || []).length === 6, String((hj.tools || []).length));
+  assert('GET /health lists all seven tools', (hj.tools || []).length === 7, String((hj.tools || []).length));
   assert('GET /health reports a configured extractor', hj.extractor_configured === true);
 
   const c = await fetch(base + '/catalog.json');
   const cj = await c.json();
-  assert('GET /catalog.json returns prices', cj.services?.length === 5 && cj.free?.length >= 1);
+  assert('GET /catalog.json returns prices', cj.services?.length === 6 && cj.free?.length >= 1);
 
   const a = await fetch(base + '/agent-card.json');
   const aj = await a.json();
@@ -75,7 +75,7 @@ try {
   assert('POST /mcp initialize', init.json?.result?.protocolVersion === '2025-06-18', init.json?.result?.protocolVersion);
 
   const list = await post('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' });
-  assert('POST /mcp tools/list', (list.json?.result?.tools || []).length === 6);
+  assert('POST /mcp tools/list', (list.json?.result?.tools || []).length === 7);
 
   const notify = await post('/mcp', { jsonrpc: '2.0', method: 'notifications/initialized' });
   assert('notifications get 202 and no body', notify.status === 202);

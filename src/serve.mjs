@@ -38,6 +38,7 @@ import healthHandler from "../api/health.mjs";
 import receiptHandler from "../api/receipt.mjs";
 import auditHandler from "../api/audit.mjs";
 import statsHandler from "../api/stats.mjs";
+import verifyHandler from "../api/verify.mjs";
 
 const PORT = Number(process.env.PORT || 8081);
 // 本机跑（没注入 PORT）时宁可只绑回环；被托管时才对外。
@@ -127,6 +128,7 @@ async function serveStatic(res, pathname) {
 const ROUTES = {
   "/receipt": "ground.check",
   "/check": "ground.check",
+  "/proof": "ground.proof",
   "/extract": "ground.extract",
   "/batch": "ground.batch",
   "/attest": "ground.attest",
@@ -160,6 +162,7 @@ const server = createServer(async (req, res) => {
     if (pathname === "/receipt") return receiptHandler(req, res);
     if (pathname === "/audit") return auditHandler(req, res);
     if (pathname === "/stats") return statsHandler(req, res);
+    if (pathname === "/verify") return verifyHandler(req, res);
     if (await serveStatic(res, pathname)) return;
     return send(404, { ok: false, error: "not found", hint: "see /agent-card.json" });
   }
@@ -230,9 +233,10 @@ server.listen(PORT, HOST, () => {
   console.log(`  GET  /receipt?d=…          a paid receipt, packed in the link (FREE)`);
   console.log(`  GET  /audit?trace=…        the kernel's own records for a turn (FREE)`);
   console.log(`  POST /mcp                  MCP JSON-RPC: initialize / tools/list / tools/call`);
-  console.log(`  POST /check | /receipt     {"url","statement"}        3 credits`);
+  console.log(`  POST /check | /receipt     {"statement","url"?}        2 credits (claim-only ok)`);
   console.log(`  POST /extract              {"url","fields":[…]}       5 credits`);
-  console.log(`  POST /batch                {"items":[…]}             10 credits`);
+  console.log(`  POST /batch                {"items":[…]}              8 credits
+  POST /proof                {"url","listing"?}         12 credits — empirical audit of another seller`);
   console.log(`  POST /attest               {"claims":[…]}            15 credits`);
   console.log(`  POST /certify              {"sources":[…],"claims":[…]} 25 credits`);
   console.log(`  POST /selfcheck            {}                         FREE`);

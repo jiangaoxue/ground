@@ -18,7 +18,8 @@
 // ============================================================
 
 import { createRequire } from 'node:module';
-import { check, extract, batch, attest, certify, verifyQuote } from './engine/ground.js';
+import { claimCheck, check, extract, batch, attest, certify, verifyQuote } from './engine/ground.js';
+import { proof } from './engine/proof.js';
 import { withReceipt } from './receipt.mjs';
 
 const require = createRequire(import.meta.url);
@@ -68,9 +69,9 @@ export const TOOLS = [
     credits: priceOf('ground.check'),
     description: withPrice(
       'ground.check',
-      'Test one statement against one web page. Fetches the page, asks the model to locate the supporting span, then verifies that span against the fetched text BY CODE. Returns verdict (supported / contradicted / not_mentioned), the verbatim quote, and the sha256 of the fetched text.'
+      'Test one statement. ACCEPTS A BARE CLAIM — no url needed: the source is proposed, fetched by this host, and the verdict is earned by a verbatim span code-matched against the fetched text. Or supply {url, statement} to test one exact page. Returns verdict, the verbatim quote, sha256 of the fetched text, and a receipt url.'
     ),
-    inputSchema: OBJ({ url: URL_STR, statement: { type: 'string', minLength: 1, maxLength: 600 } }, ['url', 'statement']),
+    inputSchema: OBJ({ url: URL_STR, statement: { type: 'string', minLength: 1, maxLength: 600 } }, ['statement']),
   },
   {
     name: 'ground.extract',
@@ -106,12 +107,21 @@ export const TOOLS = [
           type: 'array',
           minItems: 1,
           maxItems: 8,
-          items: OBJ({ statement: { type: 'string', minLength: 1, maxLength: 400 }, url: URL_STR }, ['statement', 'url']),
+          items: OBJ({ statement: { type: 'string', minLength: 1, maxLength: 400 }, url: URL_STR }, ['statement']),
         },
         deliverable: { type: 'string', maxLength: 200, description: 'Optional label for what is being attested.' },
       },
       ['claims']
     ),
+  },
+  {
+    name: 'ground.proof',
+    credits: priceOf('ground.proof'),
+    description: withPrice(
+      'ground.proof',
+      'The empirical audit of another seller: probe its endpoint 3x and measure latency, parse its own discovery document, attempt MCP tools/list, then check its listing text against what was measured — tools named vs exposed, prices stated vs catalog, latency promised vs measured. Deterministic, no model. Nothing else in this field tests reality instead of grading prose.'
+    ),
+    inputSchema: OBJ({ url: URL_STR, listing: { type: 'string', maxLength: 4000 } }, ['url']),
   },
   {
     name: 'ground.certify',
@@ -178,7 +188,7 @@ export async function callTool(name, args = {}) {
   if (!byName.has(name)) throw new Error(`unknown tool: ${name}`);
   switch (name) {
     case 'ground.check':
-      return check(args);
+      return claimCheck(args);
     case 'ground.extract':
       // The MCP schema uses `fields`; the engine wants {url, fields}.
       return extract({ url: args.url, fields: args.fields, max_chars: args.max_chars });
@@ -186,6 +196,8 @@ export async function callTool(name, args = {}) {
       return batch({ items: args.items });
     case 'ground.attest':
       return attest({ claims: args.claims });
+    case 'ground.proof':
+      return proof(args);
     case 'ground.certify':
       return certify({ sources: args.sources, claims: args.claims });
     case 'ground.selfcheck':

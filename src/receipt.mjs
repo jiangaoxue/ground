@@ -18,13 +18,14 @@
 
 import { createHash } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
+import { signPayload } from './signing.mjs';
 import './env.mjs';
 
 const MAX_STRING = 700;
 const MAX_ARRAY = 40;
 const MAX_DEPTH = 7;
 
-function slim(value, depth = 0) {
+export function slim(value, depth = 0) {
   if (value === null || value === undefined) return value ?? null;
   if (typeof value === 'string') return value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…` : value;
   if (typeof value === 'number' || typeof value === 'boolean') return value;
@@ -62,19 +63,28 @@ export function publicBase() {
   return raw ? raw.replace(/\/+$/, '') : '';
 }
 
-/** Attach a stable, self-contained address to any tool payload. */
+/** Attach a stable, self-contained address to any tool payload.
+ *  The payload is Ed25519-signed BEFORE packing, so the signature
+ *  travels inside the receipt URL: a third party can prove the
+ *  receipt came from us and was not altered in transit, with our
+ *  public key at /pubkey — no trust in this host required. */
 export function withReceipt(payload) {
   try {
-    const packed = packReceipt(payload);
+    // Sign exactly what gets packed: slim first, then sign, so a
+    // verifier that unpacks the receipt sees byte-for-byte the same
+    // canonical object the signature covers.
+    const slimmed = slim(payload);
+    const signed = { ...slimmed, ...signPayload(slimmed) };
+    const packed = packReceipt(signed);
     const id = createHash('sha256').update(packed).digest('hex').slice(0, 16);
     const base = publicBase();
     const url = base ? `${base}/receipt?d=${packed}` : null;
     return {
-      ...payload,
+      ...signed,
       receipt: {
         id,
         url,
-        note: 'Self-contained: the receipt travels inside this link, so it cannot be edited after the fact and it will still open after the Arena. Drop the /receipt.json suffix for a human-readable page.',
+        note: 'Self-contained: the receipt travels inside this link, Ed25519-signed (public key at /pubkey, free verifier at /verify), so it cannot be edited after the fact and it will still open after the Arena.',
         json_url: url ? `${url}&format=json` : null,
       },
     };

@@ -214,18 +214,98 @@ export async function extract(input) {
   return base;
 }
 
+// --- Service: ground.quotecheck (1 credit) — the fast lane.
+//
+// The room's broker rule is "cheapest whose proof held", and the one real
+// brokered deal was lost on latency, not capability. quotecheck removes
+// the model entirely: the buyer names the page AND the words, and this
+// returns whether those exact words are on that page — pure fetch + code
+// match, typically 1-3s. Verifying a given quote is also the single most
+// reused job in this market (buyers checking a seller's citations).
+export async function quoteCheck(input) {
+  const url = input?.url;
+  const quote = String(input?.quote || input?.span || '').trim().slice(0, 600);
+  if (!url || !/^https?:\/\//i.test(String(url))) throw new Error('input.url (http/https string) is required');
+  if (!quote) throw new Error('input.quote (the exact words to verify) is required');
+
+  const t0 = Date.now();
+  const page = await fetchPage(String(url), { maxChars: 60000 });
+  const base = {
+    ok: true,
+    service: 'ground.quotecheck',
+    requested_quote: quote,
+    source: {
+      url: page.final_url,
+      final_url: page.final_url,
+      requested_url: page.requested_url,
+      redirected: page.redirected,
+      status: page.status,
+      reachable: page.reachable,
+      readable: page.readable,
+      unreadable_reason: page.unreadable_reason,
+      title: page.title,
+      text_sha256: page.text_sha256,
+      chars_read: page.chars_read,
+      coverage: {
+        chars_read: page.chars_read,
+        chars_searched: Math.min(60000, String(page.text || '').length),
+        complete: !page.truncated,
+        note: page.truncated
+          ? `Only the first ${Math.min(60000, String(page.text || '').length)} characters were searched.`
+          : 'The whole document was searched.',
+      },
+      fetched_at: page.fetched_at,
+      elapsed_ms: page.elapsed_ms,
+    },
+  };
+  if (!page.readable) {
+    return {
+      ...base,
+      found: null,
+      reason: page.unreadable_reason || (page.reachable ? 'no_readable_text' : 'source_unreachable'),
+      note: 'The page could not be read, so no verification was made. Nothing was judged — and under our SLA a miss this size is disclosed, not billed as a result.',
+    };
+  }
+  const v = verifyQuote(quote, page.text);
+  if (v.verified) {
+    const aq = alnum(quote);
+    const hay = alnum(page.text);
+    const offset = hay.indexOf(aq);
+    return {
+      ...base,
+      found: true,
+      reason: v.reason,
+      match: { normalized_offset: offset, quote_alnum_chars: aq.length, tolerance: 'punctuation/quotes/whitespace-insensitive; character sequence must exist verbatim' },
+      total_elapsed_ms: Date.now() - t0,
+      model_used: false,
+      note: 'Code found the exact character sequence in the fetched text. No model was involved. Re-fetch the page and compare text_sha256 to audit.',
+    };
+  }
+  return {
+    ...base,
+    found: false,
+    reason: v.reason === 'quote_too_short' ? 'quote_too_short' : 'quote_not_in_source',
+    total_elapsed_ms: Date.now() - t0,
+    model_used: false,
+    note: v.reason === 'quote_too_short'
+      ? 'The quote is shorter than the 8-word-characters minimum this check requires; nothing was judged.'
+      : 'The exact words are not on the page (code search, no model). If the seller paraphrased, ground.check tests the paraphrase against the page instead.',
+  };
+}
+
 // --- Service: ground.check (2 credits) — claim-only capable ---
 // The buyer wants to know whether a specific statement is actually
 // supported by a specific source. We fetch, ask, then verify the
 // model's own evidence. An unprovable judgement is returned as such.
 //
 // Claim-only: buyers in a live market type "verify: X" without a URL.
-// Telling them "bring a URL first" is turning away the entire demand.
-// So when no url is given, the model proposes canonical source pages,
-// we fetch each ourselves, and the verdict is still earned the same
-// way — a verbatim span code-matched against text we fetched. The
-// proposal is disclosed: sourcing.method says model_proposed, and the
-// buyer can re-run any candidate URL itself.
+// The room's own shootout proved the old proposal flow loses to live
+// search ("the sky is blue" -> not_found while a search rival answered
+// supported). Fix: candidate discovery no longer depends on the model
+// alone. Wikipedia's open search API runs FIRST (deterministic, no key,
+// ~300ms), and the model proposal is a fallback, not the foundation.
+// Candidates are then fetched in PARALLEL, so total latency is one
+// page-fetch, not N.
 const SOURCE_FINDER_SYSTEM = `You propose canonical public web pages that would state a given claim.
 
 Reply JSON only: {"candidates":["https://...", "..."]}
@@ -234,6 +314,63 @@ Rules:
 2. Only stable, well-known, public pages you are confident exist (encyclopedia entries, official documentation, standards bodies, government pages). Never guess a URL pattern you have not seen.
 3. Primary source beats aggregator. Prefer the page a careful person would cite.
 4. If you cannot name any page you are confident exists, return {"candidates":[]}.`;
+
+// Wikipedia's open search API: deterministic candidate discovery, no key,
+// no model. This is what lets a bare claim like "the sky is blue" resolve
+// from a live encyclopedia instead of failing because a language model
+// could not name a URL it was sure exists.
+async function wikiCandidates(statement) {
+  const q = encodeURIComponent(statement.replace(/[?!.]+$/, '').slice(0, 240));
+  const api = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${q}&format=json&srlimit=3&origin=*`;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const r = await fetch(api, { signal: ctrl.signal, headers: { 'user-agent': 'Ground/1.0 (claim sourcing)' } });
+    clearTimeout(t);
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j?.query?.search || [])
+      .map((s) => s?.title)
+      .filter(Boolean)
+      .slice(0, 3)
+      .map((title) => `https://en.wikipedia.org/wiki/${encodeURIComponent(String(title).replace(/ /g, '_'))}`);
+  } catch {
+    return [];
+  }
+}
+
+// Bing HTML search: the channel that works from hosts whose egress blocks
+// Wikipedia (measured: sandbox reaches bing.com in ~2s, en.wikipedia.org
+// never). Parse the server-rendered organic results; no key, no model.
+async function bingCandidates(statement) {
+  const q = encodeURIComponent(statement.replace(/[?!.]+$/, '').slice(0, 200));
+  const url = `https://www.bing.com/search?q=${q}&count=10`;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 7000);
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'user-agent': 'Mozilla/5.0 (compatible; Ground/1.0; claim sourcing)' } });
+    clearTimeout(t);
+    if (!r.ok) return [];
+    const html = await r.text();
+    const out = [];
+    const re = /<h2[^>]*><a[^>]+href="(https?:\/\/[^"]+)"/gi;
+    let m;
+    while ((m = re.exec(html)) && out.length < 3) {
+      let u = m[1];
+      try {
+        // Bing wraps some results: /ck/a?...&u=a1<base64> — unwrap when present.
+        if (/bing\.com\/ck\/a/.test(u)) {
+          const um = /[&?]u=a1(aHR0[\w-]+)/.exec(u) || /[&?]u=a1(aHR0[^&"]+)/.exec(u);
+          if (um) u = Buffer.from(um[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+        }
+      } catch { /* keep original */ }
+      if (/^https?:\/\//i.test(u) && !/bing\.com|microsoft\.com\/bing/i.test(u)) out.push(u);
+    }
+    return [...new Set(out)].slice(0, 3);
+  } catch {
+    return [];
+  }
+}
 
 export async function claimCheck(input) {
   const url = input?.url;
@@ -244,78 +381,106 @@ export async function claimCheck(input) {
     return { ...r, service: 'ground.check' };
   }
 
-  if (!modelReady()) {
-    return {
-      ok: true, service: 'ground.check', statement,
-      verdict: 'extractor_unavailable', quote: null,
-      note: 'No extractor configured; the claim could not be sourced or judged.',
-    };
-  }
+  // Candidate discovery: three channels in parallel — Wikipedia open search,
+  // Bing organic results, and the extractor model — deduped. The sourcing
+  // block discloses exactly which channels produced what was tried.
+  const t0 = Date.now();
+  const [wiki, bing, modelOut] = await Promise.all([
+    wikiCandidates(statement),
+    bingCandidates(statement),
+    (async () => {
+      if (!modelReady()) return { candidates: [], available: false };
+      try {
+        const out = await chatJson(
+          [
+            { role: 'system', content: SOURCE_FINDER_SYSTEM },
+            { role: 'user', content: `Claim: ${statement}\n\nReturn the JSON object now.` },
+          ],
+          { timeoutMs: 30000, maxTokens: 300 }
+        );
+        return {
+          candidates: (Array.isArray(out?.candidates) ? out.candidates : [])
+            .map((u) => String(u || '').trim())
+            .filter((u) => /^https?:\/\//i.test(u))
+            .slice(0, 3),
+          available: true,
+        };
+      } catch {
+        return { candidates: [], available: false };
+      }
+    })(),
+  ]);
 
-  let candidates = [];
-  try {
-    const out = await chatJson(
-      [
-        { role: 'system', content: SOURCE_FINDER_SYSTEM },
-        { role: 'user', content: `Claim: ${statement}\n\nReturn the JSON object now.` },
-      ],
-      { timeoutMs: 30000, maxTokens: 300 }
-    );
-    candidates = (Array.isArray(out?.candidates) ? out.candidates : [])
-      .map((u) => String(u || '').trim())
-      .filter((u) => /^https?:\/\//i.test(u))
-      .slice(0, 3);
-  } catch {
-    /* fall through with empty list */
-  }
+  const candidates = [...new Set([...wiki, ...bing, ...modelOut.candidates])].slice(0, 6);
+  const channels = [];
+  if (wiki.length) channels.push('wikipedia_search');
+  if (bing.length) channels.push('bing_search');
+  if (modelOut.candidates.length) channels.push('model_proposed_urls');
+  const sourcing = {
+    method: channels.join('+') || (modelOut.available ? 'none_found' : 'model_unavailable'),
+    channels: {
+      wikipedia_search: wiki.length,
+      bing_search: bing.length,
+      model_proposed_urls: modelOut.candidates.length,
+      model_proposer_available: modelOut.available,
+    },
+    candidates,
+    discovery_ms: Date.now() - t0,
+  };
 
   if (candidates.length === 0) {
     return {
       ok: true, service: 'ground.check', statement,
       verdict: 'no_source_proposed', quote: null,
-      sourcing: { method: 'model_proposed_urls', candidates: [], tried: 0 },
-      note: 'No source page could be proposed with confidence, so nothing was fetched and nothing was judged. Provide input.url to test the claim against a page you name — that path never depends on source proposal.',
+      sourcing: { ...sourcing, candidates: [], tried: 0 },
+      note: 'No source page could be proposed with confidence (Wikipedia search found nothing, model proposed nothing), so nothing was fetched and nothing was judged. Provide input.url to test the claim against a page you name — that path never depends on source proposal.',
     };
   }
 
-  const attempts = [];
-  for (const candidate of candidates) {
-    const r = await check({ url: candidate, statement });
-    attempts.push({
-      url: r.source?.final_url || candidate,
-      verdict: r.verdict,
-      quote: r.quote || null,
-      quote_check: r.quote_check || null,
-      text_sha256: r.source?.text_sha256 || null,
-      fetched_at: r.source?.fetched_at || null,
-      status: r.source?.status ?? null,
-      readable: r.source?.readable ?? null,
-      unreadable_reason: r.unreadable_reason || r.source?.unreadable_reason || null,
-    });
-    if (r.verdict === 'supported' || r.verdict === 'contradicted') {
+  // Fetch and judge every candidate IN PARALLEL — total latency is one
+  // page-fetch, not N sequential round-trips. First decisive verdict wins.
+  let decisiveFull = null;
+  const judged = await Promise.all(candidates.map(async (candidate) => {
+    try {
+      const r = await check({ url: candidate, statement });
+      if ((r.verdict === 'supported' || r.verdict === 'contradicted') && !decisiveFull) decisiveFull = r;
       return {
-        ...r,
-        service: 'ground.check',
-        sourcing: {
-          method: 'model_proposed_urls',
-          candidates,
-          tried: attempts.length,
-          note: 'No URL was supplied with the claim. The source above was proposed by the extractor model, then fetched and verified by this service. The verdict was earned exactly as a URL-supplied check: a verbatim span, code-matched against text this host fetched. Re-fetch the URL and compare text_sha256 to audit it.',
-        },
-        attempts,
+        url: r.source?.final_url || candidate,
+        verdict: r.verdict,
+        quote: r.quote || null,
+        quote_check: r.quote_check || null,
+        understanding: r.understanding || null,
+        text_sha256: r.source?.text_sha256 || null,
+        fetched_at: r.source?.fetched_at || null,
+        status: r.source?.status ?? null,
+        readable: r.source?.readable ?? null,
+        unreadable_reason: r.unreadable_reason || r.source?.unreadable_reason || null,
       };
+    } catch (e) {
+      return { url: candidate, verdict: 'source_unavailable', quote: null,
+               unreadable_reason: String(e?.message || e).slice(0, 120) };
     }
+  }));
+
+  const decisive = judged.find((a) => a.verdict === 'supported' || a.verdict === 'contradicted');
+  if (decisive && decisiveFull) {
+    return {
+      ...decisiveFull,
+      service: 'ground.check',
+      sourcing: { ...sourcing, tried: judged.length, note: 'No URL was supplied with the claim. Candidates came from the channels named in sourcing.method (Wikipedia open search and/or the extractor model), were fetched and judged in parallel by this host, and the verdict was earned exactly as a URL-supplied check: a verbatim span, code-matched against fetched text. Re-fetch the URL and compare text_sha256 to audit it.' },
+      attempts: judged,
+    };
   }
 
-  const allUnreachable = attempts.every((a) => a.verdict === 'source_unavailable');
+  const allUnreachable = judged.every((a) => a.verdict === 'source_unavailable');
   return {
     ok: true, service: 'ground.check', statement,
     verdict: 'not_found_in_proposed_sources', quote: null,
-    sourcing: { method: 'model_proposed_urls', candidates, tried: attempts.length },
-    attempts,
+    sourcing: { ...sourcing, tried: judged.length },
+    attempts: judged,
     note: allUnreachable
-      ? `All ${attempts.length} proposed source(s) could not be fetched from this host (${attempts.map((a) => a.unreadable_reason || 'unreachable').join(', ')}). Nothing was judged. Note: the proposal itself was sound — retry from a host with different network reach, or supply input.url you know is reachable.`
-      : `Every proposed source (${attempts.length}) was fetched and none states the claim. That is what was measured — not a finding that the claim is false, and not a search of the whole web. Provide input.url to test one page you choose.`,
+      ? `All ${judged.length} proposed source(s) could not be fetched from this host (${judged.map((a) => a.unreadable_reason || 'unreachable').join(', ')}). Nothing was judged. Note: the proposal itself was sound — retry from a host with different network reach, or supply input.url you know is reachable.`
+      : `Every proposed source (${judged.length}, discovered via ${sourcing.method}) was fetched and none states the claim. That is what was measured — not a finding that the claim is false, and not a search of the whole web. Provide input.url to test one page you choose.`,
   };
 }
 

@@ -91,8 +91,8 @@ const ctx = contextFor(agents.probe);
 // The catalogue is what the agent is allowed to advertise.
 const { tools } = await callThroughKernel("ground.selfcheck", {}, ctx);
 const names = tools.filter((t) => t.namespace === "ground").map((t) => t.name).sort();
-const expected = ["ground.attest", "ground.batch", "ground.certify", "ground.check", "ground.extract", "ground.proof", "ground.selfcheck"];
-assert("catalogue lists exactly the seven sold services", JSON.stringify(names) === JSON.stringify(expected), names.join(", "));
+const expected = ["ground.attest", "ground.batch", "ground.certify", "ground.check", "ground.extract", "ground.proof", "ground.quotecheck", "ground.selfcheck"];
+assert("catalogue lists exactly the eight sold services", JSON.stringify(names) === JSON.stringify(expected), names.join(", "));
 
 const URL = "https://example.com";
 const CASES = [

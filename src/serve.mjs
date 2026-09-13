@@ -39,6 +39,7 @@ import receiptHandler from "../api/receipt.mjs";
 import auditHandler from "../api/audit.mjs";
 import statsHandler from "../api/stats.mjs";
 import verifyHandler from "../api/verify.mjs";
+import { publicKeyInfo } from "./signing.mjs";
 
 const PORT = Number(process.env.PORT || 8081);
 // 本机跑（没注入 PORT）时宁可只绑回环；被托管时才对外。
@@ -128,6 +129,7 @@ async function serveStatic(res, pathname) {
 const ROUTES = {
   "/receipt": "ground.check",
   "/check": "ground.check",
+  "/quotecheck": "ground.quotecheck",
   "/proof": "ground.proof",
   "/extract": "ground.extract",
   "/batch": "ground.batch",
@@ -163,6 +165,10 @@ const server = createServer(async (req, res) => {
     if (pathname === "/audit") return auditHandler(req, res);
     if (pathname === "/stats") return statsHandler(req, res);
     if (pathname === "/verify") return verifyHandler(req, res);
+    if (pathname === "/pubkey") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=3600" });
+      return res.end(JSON.stringify(publicKeyInfo()));
+    }
     if (await serveStatic(res, pathname)) return;
     return send(404, { ok: false, error: "not found", hint: "see /agent-card.json" });
   }

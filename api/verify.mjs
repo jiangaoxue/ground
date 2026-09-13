@@ -16,6 +16,7 @@
 // ============================================================
 
 import { unpackReceipt } from "../src/receipt.mjs";
+import { verifyPayload } from "../src/signing.mjs";
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 
@@ -83,7 +84,7 @@ export default function verifyHandler(req, res) {
   // attest/certify results carry their own verdict blocks.
   const p = r?.payload || r;
   const hasVerdictish =
-    p && (p.verdict || p.attestation || p.certification || p.fields || p.summary);
+    p && (p.verdict || p.attestation || p.certification || p.fields || p.summary || p.found !== undefined);
   add("payload", hasVerdictish ? "pass" : "fail",
     hasVerdictish ? "The receipt carries a complete answer payload." : "No recognisable answer payload inside the envelope.");
 
@@ -134,6 +135,18 @@ export default function verifyHandler(req, res) {
       cov
         ? `Coverage disclosed: ${cov.chars_judged}/${cov.chars_read} chars, complete=${cov.complete}.`
         : "Source block present but no coverage disclosure.");
+  }
+
+  // Ed25519 signature: proves the receipt was issued by this deployment and
+  // was not altered after signing — checkable offline with GET /pubkey.
+  if (p?.signature) {
+    const ok = verifyPayload(p);
+    add("signature", ok ? "pass" : "fail",
+      ok
+        ? `Ed25519 signature valid (key ${p.signature.key_id}). This receipt was issued by Ground and not modified after signing.`
+        : "Ed25519 signature INVALID — the receipt does not match its own signature. Treat as tampered.");
+  } else {
+    add("signature", "warn", "No signature block (receipt predates signing). Evidence checks above still apply.");
   }
 
   const valid = checks.every((c) => c.result !== "fail");

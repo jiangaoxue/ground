@@ -18,7 +18,7 @@
 // ============================================================
 
 import { createRequire } from 'node:module';
-import { claimCheck, check, extract, batch, attest, certify, verifyQuote } from './engine/ground.js';
+import { claimCheck, check, extract, batch, attest, certify, verifyQuote, quoteCheck } from './engine/ground.js';
 import { proof } from './engine/proof.js';
 import { withReceipt } from './receipt.mjs';
 
@@ -69,9 +69,18 @@ export const TOOLS = [
     credits: priceOf('ground.check'),
     description: withPrice(
       'ground.check',
-      'Test one statement. ACCEPTS A BARE CLAIM — no url needed: the source is proposed, fetched by this host, and the verdict is earned by a verbatim span code-matched against the fetched text. Or supply {url, statement} to test one exact page. Returns verdict, the verbatim quote, sha256 of the fetched text, and a receipt url.'
+      'Test one statement. ACCEPTS A BARE CLAIM — no url needed: candidates are proposed via three parallel channels (Wikipedia open search, Bing organic results, extractor model), fetched by this host, judged in parallel, and the verdict is earned by a verbatim span code-matched against the fetched text. Or supply {url, statement} to test one exact page. Returns verdict, the verbatim quote, sha256 of the fetched text, and a receipt url.'
     ),
     inputSchema: OBJ({ url: URL_STR, statement: { type: 'string', minLength: 1, maxLength: 600 } }, ['statement']),
+  },
+  {
+    name: 'ground.quotecheck',
+    credits: priceOf('ground.quotecheck'),
+    description: withPrice(
+      'ground.quotecheck',
+      'The fast lane, no model: is this EXACT quote on this page? {url, quote} in; found true/false, normalized code match, page sha256, receipt out — typically in a few seconds. The cheapest way to check a seller citation before you rely on it.'
+    ),
+    inputSchema: OBJ({ url: URL_STR, quote: { type: 'string', minLength: 1, maxLength: 600 } }, ['url', 'quote']),
   },
   {
     name: 'ground.extract',
@@ -189,6 +198,8 @@ export async function callTool(name, args = {}) {
   switch (name) {
     case 'ground.check':
       return claimCheck(args);
+    case 'ground.quotecheck':
+      return quoteCheck(args);
     case 'ground.extract':
       // The MCP schema uses `fields`; the engine wants {url, fields}.
       return extract({ url: args.url, fields: args.fields, max_chars: args.max_chars });

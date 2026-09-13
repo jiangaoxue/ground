@@ -10,6 +10,7 @@
 
 import {
   claimCheck as engineClaimCheck,
+  quoteCheck as engineQuoteCheck,
   extract as engineExtract,
   batch as engineBatch,
   attest as engineAttest,
@@ -114,6 +115,21 @@ const SPECS = [
       return out;
     },
     run: (args) => engineClaimCheck(args),
+  },
+  {
+    name: "ground.quotecheck",
+    action: "quotecheck",
+    schema: obj({ url: URL_STR, quote: { type: "string", minLength: 1, maxLength: 600 } }, ["url", "quote"]),
+    description:
+      "The fast lane, no model: verify an EXACT quote against one page. Pure fetch + code match, typically a few seconds. The cheapest way to check a seller citation before you rely on it.",
+    parse: (a) => {
+      const url = String(a.url || "");
+      const quote = String(a.quote || a.span || "").trim();
+      if (!/^https?:\/\//i.test(url)) throw new Error("url (http/https) is required");
+      if (!quote) throw new Error("quote (the exact words to verify) is required");
+      return { url, quote: quote.slice(0, 600) };
+    },
+    run: (args) => engineQuoteCheck(args),
   },
   {
     name: "ground.extract",
